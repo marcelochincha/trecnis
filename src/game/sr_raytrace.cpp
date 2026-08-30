@@ -295,51 +295,6 @@ void ocl_upload_emissive(const Game& e) {
     ocl::set_emissive(tf.data(), (int)tris.size());
 }
 
-void cast_debug_ray(Game& e) {
-    e.ray_debug.path.clear();
-    e.ray_debug.visited.clear();
-    e.ray_debug.active = true;
-
-    vec3 origin = e.cam._position;
-    vec3 dir    = get_ray_direction(e.cam, e.fb.width / 2, e.fb.height / 2,
-                                    e.fb.width, e.fb.height);
-    e.ray_debug.path.push_back(origin);
-
-    // Follow the ray through a few mirror bounces. Each segment queries BOTH CPU
-    // BVHs with intersect_debug, so every box tested is recorded into the shared
-    // `visited` list; the static tree is clamped to the dynamic hit so its
-    // pruning matches what a real closest-hit traversal would do.
-    const int   MAX_SEG = 4;
-    const float SURF_EPS = 1e-3f;
-    for (int seg = 0; seg < MAX_SEG; ++seg) {
-        float           best = 1e30f;
-        const bvh::Tri* tri  = nullptr;
-
-        bvh::Hit hd; hd.t = best;
-        if (!e.dynamic_bvh.empty() &&
-            e.dynamic_bvh.intersect_debug(origin, dir, hd, e.ray_debug.visited)) {
-            best = hd.t; tri = &e.dynamic_bvh.tri(hd.tri);
-        }
-        bvh::Hit hs; hs.t = best;
-        if (!e.static_bvh.empty() &&
-            e.static_bvh.intersect_debug(origin, dir, hs, e.ray_debug.visited)) {
-            best = hs.t; tri = &e.static_bvh.tri(hs.tri);
-        }
-
-        if (!tri) { // miss: draw the ray flying off into the distance, then stop
-            e.ray_debug.path.push_back(origin + dir * 100.0f);
-            break;
-        }
-
-        vec3 P = origin + dir * best;
-        e.ray_debug.path.push_back(P);
-
-        vec3 N = dot(tri->normal, dir) < 0.0f ? tri->normal : -tri->normal;
-        dir    = normalize(dir - N * (2.0f * dot(dir, N))); // mirror reflection
-        origin = P + N * SURF_EPS;
-    }
-}
-
 int worker_thread(void* data) {
     thread_data* td = (thread_data*)data;
     Game* e = td->game;
@@ -348,8 +303,6 @@ int worker_thread(void* data) {
     while (true) {
         SDL_SemWait(e->start_sems[id]);
         if (!e->workers_running) break;
-
-        bvh::reset_thread_node_visits();
 
         int stripe  = e->fb.height / e->num_workers;
         int y_start = stripe * id;
@@ -369,7 +322,6 @@ int worker_thread(void* data) {
                 e->fb.colorBuffer[y * e->fb.width + x] = pack(col) | 0xFF000000;
             }
 
-        td->visits = bvh::take_thread_node_visits();
         SDL_SemPost(e->done_sem);
     }
     return 0;

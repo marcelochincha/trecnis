@@ -79,29 +79,6 @@ void draw_bvh_debug(Game* e) {
     draw_bvh(e->dynamic_bvh);
 }
 
-void draw_ray_debug(Game* e) {
-    if (!e->ray_debug.active) return;
-
-    // 1) Every box the ray tested along its path. Green = the box was hit, so
-    //    traversal DESCENDED into it; red = the box was missed, so that whole
-    //    subtree was PRUNED (this is what the demo is meant to show).
-    for (const auto& v : e->ray_debug.visited) {
-        uint32_t col = v.box_hit ? 0xFF30FF30 : 0xFF803030;
-        draw_aabb_wire(e->fb, e->cam, v.bounds, col);
-    }
-
-    // 2) The ray's bounce path on top, bright yellow, with a small marker box at
-    //    each hit point so the bounce vertices stand out.
-    const auto& p = e->ray_debug.path;
-    for (std::size_t i = 1; i < p.size(); ++i)
-        draw_gizmo_line(e->fb, e->cam, p[i - 1], p[i], 0xFFFFFF00);
-    for (std::size_t i = 1; i + 1 < p.size(); ++i) {
-        const float s = 0.03f;
-        AABB m{ p[i] - vec3(s, s, s), p[i] + vec3(s, s, s) };
-        draw_aabb_wire(e->fb, e->cam, m, 0xFFFFFF00);
-    }
-}
-
 void draw_normals_debug(Game* e) {
     const vec3  cam_pos   = e->cam._position;
     const float scale     = 0.3f;

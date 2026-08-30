@@ -68,17 +68,6 @@ struct Game {
 
     bvh::BVH           dynamic_bvh;
     bool               use_bvh                = true;
-    // --- Debug: single-ray path demo (press [R]) ---
-    // A ray shot from the screen center: its bounce path plus every BVH box each
-    // segment tests, so we can SEE the sequence of boxes it walks and why whole
-    // subtrees get pruned. Rebuilt on demand from the CPU BVHs (Embree/GPU keep
-    // their own, undrawable trees), drawn every frame while `active`.
-    struct RayDebug {
-        bool active = false;
-        std::vector<vec3> path;                      // origin, hit1, hit2, ...
-        std::vector<bvh::BVH::VisitedNode> visited;  // boxes tested (all segments)
-    };
-    RayDebug ray_debug;
 
     bvh::BuildStrategy build_strategy         = bvh::SAH;
     bvh::BuildStrategy dynamic_build_strategy = bvh::Morton;
@@ -128,5 +117,4 @@ struct Game {
 struct thread_data {
     Game* game;
     int   thread_id;
-    long  visits = 0;
 };

@@ -6,9 +6,6 @@
 
 namespace bvh {
 
-namespace { thread_local long tl_node_visits = 0; }
-void reset_thread_node_visits() { tl_node_visits = 0; }
-long take_thread_node_visits()  { long v = tl_node_visits; tl_node_visits = 0; return v; }
 
 // ---- small AABB helpers ----------------------------------------------------
 
@@ -344,7 +341,6 @@ bool BVH::intersect(const vec3& origin, const vec3& dir, Hit& out) const {
     int   cur = 0;
 
     for (;;) {
-        ++tl_node_visits;                       // quality metric: nodes tested
         const Node& n = nodes_[cur];
 
         if (n.left < 0) { // leaf
@@ -396,7 +392,6 @@ bool BVH::occluded(const vec3& origin, const vec3& dir, float max_t) const {
     stack[sp++] = 0;
 
     while (sp > 0) {
-        ++tl_node_visits;                       // quality metric: nodes tested
         const Node& n = nodes_[stack[--sp]];
         float t_near;
         if (!aabb_hit(n.bounds, origin, inv, max_t, t_near)) continue;
@@ -413,47 +408,6 @@ bool BVH::occluded(const vec3& origin, const vec3& dir, float max_t) const {
         }
     }
     return false;
-}
-
-bool BVH::intersect_debug(const vec3& origin, const vec3& dir, Hit& out,
-                          std::vector<VisitedNode>& visited) const {
-    if (nodes_.empty()) return false;
-
-    vec3 inv(1.0f / dir.x, 1.0f / dir.y, 1.0f / dir.z);
-    float best = out.t;
-    int   best_tri = -1;
-    int   order = (int)visited.size();
-
-    int stack[64];
-    int sp = 0;
-    stack[sp++] = 0;
-
-    while (sp > 0) {
-        const Node& n = nodes_[stack[--sp]];
-        float t_near;
-        bool box_hit = aabb_hit(n.bounds, origin, inv, best, t_near);
-        bool leaf    = (n.left < 0);
-        visited.push_back({ n.bounds, leaf, box_hit, order++ });
-        if (!box_hit) continue; // subtree pruned — the demo highlights these
-
-        if (leaf) {
-            for (int i = n.start; i < n.start + n.count; ++i) {
-                float t;
-                if (tri_hit(tri_isect_[i], origin, dir, t) && t < best) {
-                    best = t;
-                    best_tri = i;
-                }
-            }
-        } else if (sp + 2 <= 64) {
-            stack[sp++] = n.left;
-            stack[sp++] = n.right;
-        }
-    }
-
-    if (best_tri < 0) return false;
-    out.t = best;
-    out.tri = best_tri;
-    return true;
 }
 
 // ---- GPU flattening --------------------------------------------------------

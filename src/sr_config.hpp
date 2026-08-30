@@ -21,8 +21,6 @@ struct config
     float target_fps;
     int audio_rate;
     bool debug_mode;
-    bool bench;
-    bool demo;
     int  num_workers; // CPU render threads; -1 = all hardware threads
 
     config()
@@ -31,8 +29,6 @@ struct config
           target_fps(TARGET_FPS),
           audio_rate(AUDIO_RATE),
           debug_mode(DEBUG),
-          bench(false),
-          demo(false),
           num_workers(-1)
     {
     }
@@ -80,14 +76,6 @@ inline config parse_args(int argc, char* argv[])
         else if (strcmp(argv[i], "--debug") == 0)
         {
             cfg.debug_mode = true;
-        }
-        else if (strcmp(argv[i], "--bench") == 0)
-        {
-            cfg.bench = true;
-        }
-        else if (strcmp(argv[i], "--demo") == 0)
-        {
-            cfg.demo = true;
         }
         else if (strcmp(argv[i], "--help") == 0)
         {

@@ -3,7 +3,6 @@
 #include <game/sr_raytrace.hpp>
 #include <game/sr_scene.hpp>
 #include <game/sr_hud.hpp>
-#include <game/sr_benchmark.hpp>
 
 #include <renderer/sr_ocl.hpp>
 #include <sound/sr_sound.hpp>
@@ -256,7 +255,6 @@ void game_update(Game* e, float dt) {
 void game_render(Game* e, SDL_Texture* sdl_fb_texture, float dt) {
     uint64_t t = SDL_GetPerformanceCounter();
     double ms_build = 0, ms_core = 0;
-    long node_visits = 0;
 
     e->fb.clear(0xFF000000);
 
@@ -299,7 +297,6 @@ void game_render(Game* e, SDL_Texture* sdl_fb_texture, float dt) {
         if (!gpu) {
             for (int i = 0; i < e->num_workers; ++i) SDL_SemPost(e->start_sems[i]);
             for (int i = 0; i < e->num_workers; ++i) SDL_SemWait(e->done_sem);
-            for (int i = 0; i < e->num_workers; ++i) node_visits += e->worker_args[i].visits;
         }
         ms_core = tick_ms(t);
     } else {
@@ -329,11 +326,8 @@ void game_render(Game* e, SDL_Texture* sdl_fb_texture, float dt) {
         if (!e->raytrace_mode) build_scene_tris(e);
         draw_normals_debug(e);
     }
-    if (e->ray_debug.active) draw_ray_debug(e);
 
     double ms_present = tick_ms(t);
-    long   rays = (long)e->fb.width * e->fb.height;
-    double nodes_per_ray = rays > 0 ? (double)node_visits / rays : 0.0;
 
     if (e->show_hud) {
         char backend[192];
@@ -364,15 +358,15 @@ void game_render(Game* e, SDL_Texture* sdl_fb_texture, float dt) {
                 "--- Static BVH (scene) ---\n"
                 "  tris: %zu  nodes: %zu  build: %.2fms\n"
                 "--- Dynamic BVH (objs+peds) ---\n"
-                "  tris: %zu  nodes: %zu  nodes/ray: %.1f\n"
+                "  tris: %zu  nodes: %zu\n"
                 "Accel: %s   Static: %s  Dyn: %s\n"
                 "Backend: %s\n"
                 "Move: %s\n"
-                "[TAB] mode [B] BVH [V] vis [R] ray\n[N] normals [M] menu [F1] bench\n[SPACE x2] walk/fly  [H] compact  [G] backend\n",
+                "[TAB] mode [B] BVH [V] vis [N] normals\n[M] menu  [SPACE x2] walk/fly\n[H] compact  [G] backend\n",
                 e->raytrace_mode ? "RAYTRACE" : "RASTER",
                 dt*1000.0f, 1.0f/dt, ms_core, ms_build, ms_present,
                 e->static_bvh.triangle_count(), e->static_bvh.node_count(), e->static_build_ms,
-                e->dynamic_bvh.triangle_count(), e->dynamic_bvh.node_count(), nodes_per_ray,
+                e->dynamic_bvh.triangle_count(), e->dynamic_bvh.node_count(),
                 e->use_bvh ? "BVH (fast)" : "BRUTE FORCE (slow)",
                 e->build_strategy==bvh::SAH ? "SAH" : e->build_strategy==bvh::Median ? "Median" : "Morton",
                 e->dynamic_build_strategy==bvh::SAH ? "SAH" : e->dynamic_build_strategy==bvh::Median ? "Median" : "Morton",
@@ -399,9 +393,6 @@ void game_handle_events(Game* e, SDL_Event& event, bool& running) {
         SDL_SetRelativeMouseMode(e->show_menu ? SDL_FALSE : SDL_TRUE);
         return;
     }
-    if (event.type == SDL_KEYDOWN && event.key.keysym.sym == SDLK_F1) {
-        run_benchmark(e); return;
-    }
     if (event.type == SDL_MOUSEWHEEL) {
         // Scroll up = faster, down = slower. Scale multiplicatively so the step
         // feels even across the range, then clamp to [min, max].
@@ -426,10 +417,6 @@ void game_handle_events(Game* e, SDL_Event& event, bool& running) {
             case SDLK_n:   e->show_normals  = !e->show_normals;  break;
             case SDLK_g:   cycle_backend(e, +1); break;
             case SDLK_p:   toggle_character_anim(e); break;
-            case SDLK_r:                              // ray-path demo: shoot from screen center
-                if (e->ray_debug.active) e->ray_debug.active = false;
-                else                     cast_debug_ray(*e);
-                break;
             default: break;
         }
     }
