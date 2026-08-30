@@ -1,0 +1,39 @@
+# Third-party headers (place manually: SDL2/, CL/, embree4/ under third_party/)
+/third_party/
+
+# Build artifacts
+/build/
+/bin/
+/out/
+*.o
+*.obj
+*.a
+*.lib
+*.dll
+*.exe
+*.so
+*.dylib
+
+# IDE / editor
+.vscode/
+.idea/
+.DS_Store
+*.swp
+*~
+
+# Heavy assets (not versioned): put big room scans / models here
+/res/models/*.ply
+/res/models/*.bin
+
+# Reports (generated)
+*.aux
+*.log
+*.out
+*.toc
+*.pdf
+*.nav
+*.vrb
+
+# Demo capture intermediates (the .mp4 is kept)
+docs/demo_*.bmp
+tools/
