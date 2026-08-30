@@ -4,7 +4,7 @@
 #include <render/raster/sr_renderer.hpp>
 #include <render/render_scene.hpp>
 #include <render/raytrace/backend.hpp>
-#include <game/sr_skin.hpp>
+#include <engine/anim/skinned_mesh.hpp>
 #include <render/raytrace/bvh.hpp>
 #include <unordered_map>
 #include <string>

@@ -1,5 +1,7 @@
 #include <game/sr_scene.hpp>
 #include <render/raytrace/sr_raytrace.hpp>
+#include <engine/anim/skinned_mesh.hpp>
+#include <engine/assets/obj_loader.hpp>
 #include <core/sr_texture.hpp>
 #include <algorithm>
 #include <cmath>
