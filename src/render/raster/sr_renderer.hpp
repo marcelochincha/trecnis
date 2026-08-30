@@ -3,12 +3,12 @@
 #include <cmath>
 #include <cstdint>
 #include <cmath>
-#include <renderer/sr_geometry.hpp>
-#include <renderer/sr_texture.hpp>
-#include <renderer/sr_text.hpp>
-#include <renderer/sr_camera.hpp>
-#include <renderer/sr_render_config.hpp>
-#include <renderer/sr_framebuffer.hpp>
+#include <core/sr_geometry.hpp>
+#include <core/sr_texture.hpp>
+#include <core/sr_text.hpp>
+#include <core/sr_camera.hpp>
+#include <core/sr_render_config.hpp>
+#include <core/sr_framebuffer.hpp>
 
 struct rasterCoord
 {

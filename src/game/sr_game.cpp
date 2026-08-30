@@ -1,10 +1,10 @@
 #include <game/sr_game.hpp>
 #include <game/sr_game_state.hpp>
-#include <game/sr_raytrace.hpp>
+#include <render/raytrace/sr_raytrace.hpp>
 #include <game/sr_scene.hpp>
 #include <game/sr_hud.hpp>
 
-#include <renderer/sr_ocl.hpp>
+#include <render/raytrace/sr_ocl.hpp>
 #include <sound/sr_sound.hpp>
 #include <sr_config.hpp>
 #include <algorithm>

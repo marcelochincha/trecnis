@@ -1,4 +1,4 @@
-#include <renderer/bvh.hpp>
+#include <render/raytrace/bvh.hpp>
 
 #include <algorithm>
 #include <cmath>

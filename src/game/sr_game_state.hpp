@@ -1,15 +1,15 @@
 #pragma once
 // Internal header — included only by game sub-modules, not exposed publicly.
 #include <SDL2/SDL.h>
-#include <renderer/sr_renderer.hpp>
-#include <renderer/sr_skin.hpp>
-#include <renderer/bvh.hpp>
+#include <render/raster/sr_renderer.hpp>
+#include <game/sr_skin.hpp>
+#include <render/raytrace/bvh.hpp>
 #include <unordered_map>
 #include <string>
 #include <vector>
 #include <array>
 #ifdef WITH_EMBREE
-#include <renderer/embree_bvh.hpp>
+#include <render/raytrace/embree_bvh.hpp>
 #endif
 
 using RTTri = bvh::Tri;

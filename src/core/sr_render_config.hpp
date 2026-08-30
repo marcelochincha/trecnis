@@ -2,7 +2,7 @@
 
 #include <cstdint>
 #include <math/sr_math.hpp>
-#include <renderer/sr_texture.hpp>
+#include <core/sr_texture.hpp>
 
 // Define here the configuration for drawing mesh
 struct renderConfig

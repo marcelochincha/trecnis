@@ -1,5 +1,5 @@
 #pragma once
-#include <renderer/sr_framebuffer.hpp>
+#include <core/sr_framebuffer.hpp>
 
 #define BYTE_TO_BINARY_PATTERN "%c%c%c%c%c%c%c%c"
 #define BYTE_TO_BINARY(byte)  \

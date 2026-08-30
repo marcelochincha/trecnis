@@ -6,10 +6,10 @@
 #include <SDL2/SDL.h>
 
 #include <math/sr_math.hpp>
-#include <renderer/sr_renderer.hpp>
-#include <renderer/sr_camera.hpp>
-#include <renderer/sr_texture.hpp>
-#include <renderer/sr_text.hpp>
+#include <render/raster/sr_renderer.hpp>
+#include <core/sr_camera.hpp>
+#include <core/sr_texture.hpp>
+#include <core/sr_text.hpp>
 #include <sound/sr_sound.hpp>
 #include <game/sr_game.hpp>
 #include <sr_config.hpp>

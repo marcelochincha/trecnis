@@ -1,8 +1,8 @@
 #pragma once
 
 #include <math/sr_math.hpp>
-#include <renderer/sr_geometry.hpp>
-#include <renderer/sr_texture.hpp>
+#include <core/sr_geometry.hpp>
+#include <core/sr_texture.hpp>
 #include <cmath>
 #include <cstdint>
 #include <fstream>

@@ -1,4 +1,4 @@
-#include <renderer/sr_geometry.hpp>
+#include <core/sr_geometry.hpp>
 
 // Header-aware ASCII PLY loader. Instead of assuming a fixed "X Y Z S T" vertex
 // layout and three bare indices per face, it parses the header to learn how many

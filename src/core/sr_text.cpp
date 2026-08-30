@@ -1,5 +1,5 @@
-#include <renderer/font8x8_basic.hpp>
-#include <renderer/sr_text.hpp>
+#include <core/font8x8_basic.hpp>
+#include <core/sr_text.hpp>
 
 inline void draw_outline(framebuffer &fb, int x, int y, uint32_t color)
 {

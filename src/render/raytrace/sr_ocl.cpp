@@ -1,4 +1,4 @@
-#include <renderer/sr_ocl.hpp>
+#include <render/raytrace/sr_ocl.hpp>
 
 // =============================================================================
 // Build with -DENABLE_OPENCL to compile the GPU offload below; without it the

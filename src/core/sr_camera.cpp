@@ -1,5 +1,5 @@
 #include <math/sr_math.hpp>
-#include <renderer/sr_camera.hpp>
+#include <core/sr_camera.hpp>
 #include <cmath>
 #include <stdio.h>
 

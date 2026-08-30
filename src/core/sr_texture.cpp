@@ -1,4 +1,4 @@
-#include <renderer/sr_texture.hpp>
+#include <core/sr_texture.hpp>
 
 
 bool load_png_texture(const std::string &filename, texture &m, int max_size)

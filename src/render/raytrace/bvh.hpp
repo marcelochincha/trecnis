@@ -1,7 +1,7 @@
 #pragma once
 
 #include <math/sr_math.hpp>
-#include <renderer/sr_geometry.hpp> // AABB
+#include <core/sr_geometry.hpp> // AABB
 #include <vector>
 #include <cstddef>
 

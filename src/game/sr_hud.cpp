@@ -1,7 +1,7 @@
 #include <game/sr_hud.hpp>
-#include <game/sr_raytrace.hpp>
+#include <render/raytrace/sr_raytrace.hpp>
 #include <game/sr_scene.hpp>
-#include <renderer/sr_ocl.hpp>
+#include <render/raytrace/sr_ocl.hpp>
 #include <algorithm>
 #include <cstdio>
 

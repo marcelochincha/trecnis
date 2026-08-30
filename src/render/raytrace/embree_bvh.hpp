@@ -10,7 +10,7 @@
 #ifdef WITH_EMBREE
 
 #include <embree4/rtcore.h>
-#include <renderer/bvh.hpp>      // bvh::Tri, vec3
+#include <render/raytrace/bvh.hpp>      // bvh::Tri, vec3
 #include <vector>
 
 namespace embree_ref {
