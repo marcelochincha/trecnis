@@ -2,15 +2,14 @@
 // Internal header — included only by game sub-modules, not exposed publicly.
 #include <SDL2/SDL.h>
 #include <render/raster/sr_renderer.hpp>
+#include <render/render_scene.hpp>
+#include <render/raytrace/backend.hpp>
 #include <game/sr_skin.hpp>
 #include <render/raytrace/bvh.hpp>
 #include <unordered_map>
 #include <string>
 #include <vector>
 #include <array>
-#ifdef WITH_EMBREE
-#include <render/raytrace/embree_bvh.hpp>
-#endif
 
 using RTTri = bvh::Tri;
 
@@ -18,14 +17,6 @@ using RTTri = bvh::Tri;
 #define FIELD_SLICES 10
 #define FIELD_STACKS 10
 #define CITY_SPAN    50.0f
-
-struct thread_data;
-
-enum class RenderBackend {
-    Cpu = 0,
-    OclGpu = 1,
-    Embree = 2,
-};
 
 struct Game {
     framebuffer fb;
@@ -55,7 +46,6 @@ struct Game {
     bool   show_hud     = true;
     bool   hud_simple   = false;
     bool   show_normals = false;
-    RenderBackend backend = RenderBackend::Cpu;
     bool   fly_mode     = true;
     Uint32 last_space_ms = 0;
 
@@ -92,29 +82,13 @@ struct Game {
     float anim_time    = 0.0f;      // unified clock: drives mesh + camera
     bool  anim_playing = false;     // toggled by [P] in the Character scene
 
-#ifdef WITH_EMBREE
-    embree_ref::Scene     embree_static_scene;
-    embree_ref::Scene     embree_dynamic_scene;
-    std::vector<bvh::Tri> embree_static_tris;
-    std::vector<bvh::Tri> embree_dynamic_tris;
-    bool                  embree_static_dirty = true;
-#endif
-
     std::array<texture, 6> skybox_faces;
     bool skybox_enabled = true;
 
-    static constexpr int MAX_WORKERS = 64;      // fixed cap for the arrays below
-    int          num_workers                 = 4; // active count (set from --threads)
-    SDL_Thread*  render_workers[MAX_WORKERS] = {};
-    thread_data* worker_args                 = nullptr;
-    SDL_sem*     start_sems[MAX_WORKERS]     = {};
-    SDL_sem*     done_sem                    = nullptr;
-    bool         workers_running             = true;
+    // Ray-trace render subsystem: owns the worker pool and the CPU/Embree/OpenCL
+    // backends, and holds the runtime backend selection.
+    RaytraceRenderer renderer;
+    int num_workers = 4;   // configured CPU thread count (from --threads)
 
     Game(int width, int height) : fb(width, height) {}
-};
-
-struct thread_data {
-    Game* game;
-    int   thread_id;
 };

@@ -650,9 +650,6 @@ void rebuild_field(Game* e) {
     else                       build_character(e);
     e->skybox_enabled = (e->scene_id != 3);
     e->static_build_ms = (SDL_GetPerformanceCounter()-t0)*1000.0/SDL_GetPerformanceFrequency();
-    #ifdef WITH_EMBREE
-        e->embree_static_dirty = true;
-    #endif
 
     e->emissive_tris.clear();
     for (int i = 0; i < (int)e->static_bvh.triangle_count(); ++i) {
@@ -666,15 +663,7 @@ void rebuild_field(Game* e) {
                    : e->build_strategy==bvh::Median ? "Median" : "Morton";
     std::cout << "  -> build " << sn << " (" << bs << "): " << e->static_build_ms << " ms\n";
 
-    if (ocl::available()) {
-        std::vector<float> nb, tf; std::vector<int> nl;
-        if (!e->static_bvh.empty()) {
-            e->static_bvh.flatten(nb, nl, tf);
-            ocl::set_room(nb.data(), nl.data(), tf.data(),
-                          (int)e->static_bvh.node_count(), (int)e->static_bvh.triangle_count());
-        } else {
-            ocl::set_room(nullptr, nullptr, nullptr, 0, 0);
-        }
-        ocl_upload_emissive(*e);
-    }
+    // Invalidate cached backend trees and re-push static geometry / lights. A
+    // no-op during initial setup (renderer not yet initialized).
+    e->renderer.reload_scene(e->static_bvh, e->skybox_faces, e->emissive_tris);
 }

@@ -110,13 +110,7 @@ static const char* menu_label(int i) {
 static const char* menu_value(const Game* e, int i) {
     switch (i) {
         case 0: return e->raytrace_mode ? "Raytrace"   : "Raster";
-        case 1:
-            switch (e->backend) {
-                case RenderBackend::Cpu:    return "CPU SOFTWARE";
-                case RenderBackend::OclGpu: return "OCL GPU";
-                case RenderBackend::Embree: return "EMBREE";
-            }
-            return "CPU SOFTWARE";
+        case 1: return e->renderer.current_name();
         case 2: return e->use_bvh       ? "BVH"        : "Brute force";
         case 3: return e->show_bvh      ? "On"         : "Off";
         case 4: return e->scene_id==0 ? "City" : e->scene_id==1 ? "Spheres" : e->scene_id==2 ? "PBR Test" : e->scene_id==3 ? "Cornell Box" : "Character";
@@ -132,26 +126,9 @@ static const char* menu_value(const Game* e, int i) {
 }
 
 void menu_apply(Game* e, int dir) {
-    auto backend_ok = [&](RenderBackend b) {
-        if (b == RenderBackend::Cpu) return true;
-        if (b == RenderBackend::OclGpu) return ocl::available();
-        #ifdef WITH_EMBREE
-                if (b == RenderBackend::Embree) return true;
-        #endif
-        return false;
-    };
-
     switch (e->menu_cursor) {
         case 0: e->raytrace_mode = !e->raytrace_mode; break;
-        case 1: {
-            int cur = (int)e->backend;
-            for (int step = 0; step < 3; ++step) {
-                cur = (cur + (dir < 0 ? 2 : 1)) % 3;
-                RenderBackend next = (RenderBackend)cur;
-                if (backend_ok(next)) { e->backend = next; break; }
-            }
-            break;
-        }
+        case 1: e->renderer.cycle(dir); break;
         case 2: e->use_bvh       = !e->use_bvh;       break;
         case 3: e->show_bvh      = !e->show_bvh;      break;
         case 4: e->scene_id = (e->scene_id+(dir<0?4:1))%5; rebuild_field(e); break;

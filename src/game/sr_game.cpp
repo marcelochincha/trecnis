@@ -9,50 +9,36 @@
 #include <sr_config.hpp>
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 
 static const float kMouseSensitivity = 0.0025f;
 static const float kMinMoveSpeed     = 0.5f;   // mouse-wheel speed clamp: lower bound
 static const float kMaxMoveSpeed     = 60.0f;  // mouse-wheel speed clamp: upper bound
 
-static const char* backend_name(RenderBackend b) {
-    switch (b) {
-        case RenderBackend::Cpu:    return "CPU SOFTWARE";
-        case RenderBackend::OclGpu: return "OCL GPU";
-        case RenderBackend::Embree: return "EMBREE";
-        default:                    return "UNKNOWN";
-    }
-}
+// Fill the per-frame render view the ray-trace backends consume. This is the
+// seam between the game world and render/: everything the tracer needs, and
+// nothing of the Game type leaks across it.
+static RenderScene make_render_scene(Game* e) {
+    RenderScene s;
+    s.cam    = &e->cam;
+    s.width  = e->fb.width;
+    s.height = e->fb.height;
 
-static bool backend_available(const Game* e, RenderBackend b) {
-    switch (b) {
-        case RenderBackend::Cpu:
-            return true;
-        case RenderBackend::OclGpu:
-            return ocl::available();
-        case RenderBackend::Embree:
-            #ifdef WITH_EMBREE
-                return true;
-            #else
-                (void)e;
-                return false;
-            #endif
-    }
-    (void)e;
-    return false;
-}
+    s.static_bvh  = &e->static_bvh;
+    s.dynamic_bvh = &e->dynamic_bvh;
+    s.brute_tris  = &e->rt_tris;
+    s.use_bvh     = e->use_bvh;
+    s.static_strategy  = e->build_strategy;
+    s.dynamic_strategy = e->dynamic_build_strategy;
 
-static void cycle_backend(Game* e, int dir) {
-    const int kCount = 3;
-    int cur = (int)e->backend;
-    for (int step = 0; step < kCount; ++step) {
-        cur = (cur + (dir < 0 ? kCount - 1 : 1)) % kCount;
-        RenderBackend next = (RenderBackend)cur;
-        if (backend_available(e, next)) {
-            e->backend = next;
-            return;
-        }
-    }
-    e->backend = RenderBackend::Cpu;
+    s.emissive        = &e->emissive_tris;
+    s.skybox          = &e->skybox_faces;
+    s.skybox_enabled  = e->skybox_enabled;
+
+    s.reflections = e->reflections;
+    s.max_bounces = e->max_bounces;
+    s.spp         = e->spp;
+    return s;
 }
 
 static const int kSceneCharacter = 4;
@@ -131,40 +117,13 @@ void game_init(Game* e) {
     #endif
     build_scene_tris(e);
 
-    if (ocl::init(e->max_bounces, AMBIENT, SHADOW_EPS)) {
-        std::vector<float> nb, tf; std::vector<int> nl;
-        if (!e->static_bvh.empty()) {
-            e->static_bvh.flatten(nb, nl, tf);
-            ocl::set_room(nb.data(), nl.data(), tf.data(),
-                          (int)e->static_bvh.node_count(), (int)e->static_bvh.triangle_count());
-        } else {
-            ocl::set_room(nullptr, nullptr, nullptr, 0, 0);
-        }
-        std::vector<uint32_t> px; int off[6], w[6], h[6]; int cur = 0;
-        for (int i = 0; i < 6; ++i) {
-            const texture& t = e->skybox_faces[i];
-            w[i]=t.width; h[i]=t.height; off[i]=cur;
-            int n = t.width*t.height;
-            for (int k = 0; k < n; ++k) px.push_back(t.data ? t.data[k] : 0u);
-            cur += n;
-        }
-        ocl::set_sky(px.data(), (int)px.size(), off, w, h);
-        ocl_upload_emissive(*e);
-    }
-
-    // Resolve the worker count from --threads: -1 (or 0) = all hardware threads,
-    // clamped to [1, MAX_WORKERS] so the fixed-size arrays never overflow.
+    // Resolve the worker count from --threads: -1 (or 0) = all hardware threads.
     int req = global_config.num_workers;
     if (req <= 0) req = SDL_GetCPUCount();
-    e->num_workers = std::clamp(req, 1, Game::MAX_WORKERS);
+    e->num_workers = std::clamp(req, 1, 64);
 
-    e->done_sem    = SDL_CreateSemaphore(0);
-    e->worker_args = new thread_data[e->num_workers];
-    for (int i = 0; i < e->num_workers; ++i) {
-        e->start_sems[i]  = SDL_CreateSemaphore(0);
-        e->worker_args[i] = thread_data{e, i};
-        e->render_workers[i] = SDL_CreateThread(worker_thread, "RenderWorker", &e->worker_args[i]);
-    }
+    e->renderer.init(e->num_workers, e->max_bounces, AMBIENT, SHADOW_EPS);
+    e->renderer.upload_static(e->static_bvh, e->skybox_faces, e->emissive_tris);
 }
 
 void game_update(Game* e, float dt) {
@@ -262,42 +221,10 @@ void game_render(Game* e, SDL_Texture* sdl_fb_texture, float dt) {
         build_scene_tris(e);
         ms_build = tick_ms(t);
 
-        // Prime the camera's cached rotation matrix on the main thread before workers fire.
-        mat4 R = e->cam.rotation();
-
-        bool gpu = (e->backend == RenderBackend::OclGpu) && ocl::available();
-
-        #ifdef WITH_EMBREE
-                if (e->backend == RenderBackend::Embree) {
-                    if (e->embree_static_dirty) {
-                        e->embree_static_tris.clear();
-                        for (size_t i = 0; i < e->static_bvh.triangle_count(); ++i)
-                            e->embree_static_tris.push_back(e->static_bvh.tri((int)i));
-                        e->embree_static_scene.build(e->embree_static_tris, e->build_strategy);
-                        e->embree_static_dirty = false;
-                    }
-                    e->embree_dynamic_tris = e->rt_tris;
-                    e->embree_dynamic_scene.build(e->embree_dynamic_tris, e->dynamic_build_strategy);
-                }
-        #endif
-
-        if (gpu) {
-            std::vector<float> nb, tf; std::vector<int> nl;
-            e->dynamic_bvh.flatten(nb, nl, tf);
-            ocl::set_dynamic(nb.data(), nl.data(), tf.data(),
-                             (int)e->dynamic_bvh.node_count(), (int)e->dynamic_bvh.triangle_count());
-            vec4 cx = R*vec4(1,0,0,0), cy = R*vec4(0,1,0,0), cz = R*vec4(0,0,1,0);
-            float tb = tanf(to_radians(e->cam._fov)*0.5f), ta = tb/e->cam._aspectRatio;
-            ocl::render(e->cam._position.x, e->cam._position.y, e->cam._position.z,
-                        cx.x,cx.y,cx.z, cy.x,cy.y,cy.z, cz.x,cz.y,cz.z,
-                        tb, ta, SUN_DIR.x, SUN_DIR.y, SUN_DIR.z,
-                        e->spp, e->skybox_enabled ? 1 : 0, e->reflections ? 1 : 0,
-                        e->fb.width, e->fb.height, e->fb.colorBuffer);
-        }
-        if (!gpu) {
-            for (int i = 0; i < e->num_workers; ++i) SDL_SemPost(e->start_sems[i]);
-            for (int i = 0; i < e->num_workers; ++i) SDL_SemWait(e->done_sem);
-        }
+        // One dispatch point: the active backend (CPU BVH / Embree / OpenCL)
+        // renders the frame from a decoupled scene view.
+        RenderScene scene = make_render_scene(e);
+        e->renderer.render(scene, e->fb);
         ms_core = tick_ms(t);
     } else {
         renderConfig cfg;
@@ -331,14 +258,15 @@ void game_render(Game* e, SDL_Texture* sdl_fb_texture, float dt) {
 
     if (e->show_hud) {
         char backend[192];
-        if (e->raytrace_mode && e->backend == RenderBackend::OclGpu && ocl::available()) {
-            snprintf(backend, sizeof(backend), "%s: %s", backend_name(e->backend), ocl::device_name());
-        } else if (e->raytrace_mode && e->backend == RenderBackend::OclGpu) {
-            snprintf(backend, sizeof(backend), "%s (unavailable)", backend_name(e->backend));
-        } else if (e->raytrace_mode && e->backend == RenderBackend::Cpu) {
-            snprintf(backend, sizeof(backend), "%s (%d workers)", backend_name(e->backend), e->num_workers);
+        const char* bname = e->renderer.current_name();
+        if (e->raytrace_mode && !e->renderer.current_available()) {
+            snprintf(backend, sizeof(backend), "%s (unavailable)", bname);
+        } else if (e->raytrace_mode && e->renderer.index() == 0) {
+            snprintf(backend, sizeof(backend), "%s (%d workers)", bname, e->renderer.workers());
+        } else if (e->raytrace_mode && ocl::available() && std::strcmp(bname, "OCL GPU") == 0) {
+            snprintf(backend, sizeof(backend), "%s: %s", bname, ocl::device_name());
         } else {
-            snprintf(backend, sizeof(backend), "%s", backend_name(e->backend));
+            snprintf(backend, sizeof(backend), "%s", bname);
         }
 
         if (e->hud_simple) {
@@ -415,7 +343,7 @@ void game_handle_events(Game* e, SDL_Event& event, bool& running) {
             case SDLK_v:   e->show_bvh      = !e->show_bvh;      break;
             case SDLK_h:   e->hud_simple    = !e->hud_simple;    break;
             case SDLK_n:   e->show_normals  = !e->show_normals;  break;
-            case SDLK_g:   cycle_backend(e, +1); break;
+            case SDLK_g:   e->renderer.cycle(+1); break;
             case SDLK_p:   toggle_character_anim(e); break;
             default: break;
         }
@@ -423,11 +351,6 @@ void game_handle_events(Game* e, SDL_Event& event, bool& running) {
 }
 
 void game_shutdown(Game* e) {
-    e->workers_running = false;
-    for (int i = 0; i < e->num_workers; ++i) SDL_SemPost(e->start_sems[i]);
-    for (int i = 0; i < e->num_workers; ++i) SDL_WaitThread(e->render_workers[i], NULL);
-    for (int i = 0; i < e->num_workers; ++i) SDL_DestroySemaphore(e->start_sems[i]);
-    SDL_DestroySemaphore(e->done_sem);
-    delete[] e->worker_args;
+    e->renderer.shutdown();
     delete e->field_mesh;
 }
