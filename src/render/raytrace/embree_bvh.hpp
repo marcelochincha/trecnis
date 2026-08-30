@@ -1,12 +1,10 @@
 #pragma once
 
-// Optional reference backend built on Intel Embree. It builds Embree's own BVH
-// over the SAME triangles our BVH uses, so the comparison study can measure our
-// SAH/Median/Morton build against the industry-standard Embree kernels.
-//
-// Compiled only when WITH_EMBREE is defined (CMake finds embree). Otherwise the
-// whole header is empty and the benchmark simply skips the Embree row, so the
-// project builds everywhere.
+// Thin wrapper over Intel Embree: builds Embree's own BVH over the SAME
+// triangles our BVH uses, exposing nearest-hit and occlusion queries. Used by
+// EmbreeAccel to serve the Embree render backend. Compiled only when
+// WITH_EMBREE is defined; otherwise this header is empty and the backend is
+// simply absent from the runtime toggle.
 #ifdef WITH_EMBREE
 
 #include <embree4/rtcore.h>

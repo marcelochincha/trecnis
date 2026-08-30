@@ -36,15 +36,15 @@ struct config
 
 inline void print_help()
 {
-    printf("SR-LEC Usage:\n");
-    printf("  --width <pixels>        Window width (default: 320)\n");
-    printf("  --height <pixels>       Window height (default: 200)\n");
+    printf("Usage:\n");
+    printf("  --width <pixels>        Window width (default: %d)\n", W_WIDTH);
+    printf("  --height <pixels>       Window height (default: %d)\n", W_HEIGHT);
     printf("  --fps <value>           Target FPS (default: 60.0)\n");
-    printf("  --audio-rate <hz>       Audio sample rate (default: 16384)\n");
-    printf("  --threads <n>           CPU render threads (default: 4, -1 = all cores)\n");
+    printf("  --audio-rate <hz>       Audio sample rate (default: %d)\n", AUDIO_RATE);
+    printf("  --threads <n>           CPU render threads (-1 = all cores)\n");
     printf("  --debug                 Enable debug mode\n");
     printf("  --help                  Show this help\n");
-    printf("\nExample: sr_lec.exe --width 320 --height 200  --fps 60\n");
+    printf("\nExample: bvh_raytracer.exe --width 1280 --height 720 --fps 60\n");
 }
 
 inline config parse_args(int argc, char* argv[])

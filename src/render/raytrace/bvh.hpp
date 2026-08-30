@@ -7,23 +7,10 @@
 
 struct texture; // forward-declared; include sr_texture.hpp to use
 
-// =============================================================================
-// Bounding Volume Hierarchy (BVH) — acceleration structure for ray tracing.
-//
-// WHY: the naive ray tracer tests every ray against EVERY triangle: O(N) per
-// ray, so a frame is O(pixels * N). A BVH groups triangles into a tree of
-// nested axis-aligned boxes (AABBs). A ray first tests the cheap boxes and
-// only descends into the ones it actually hits, skipping whole subtrees of
-// triangles. That turns the per-ray cost from O(N) into ~O(log N) on average.
-//
-// HOW the tree is built: top-down with the Surface Area Heuristic (SAH). At
-// each node we try to split its triangles into two groups so that the expected
-// cost of tracing a ray through them is minimal. SAH estimates that cost from
-// the surface area of each child box times how many triangles it holds (a ray
-// is more likely to enter a bigger box). We evaluate candidate splits with
-// "binning" (cheap, ~12 buckets per axis) instead of testing every triangle
-// boundary, which keeps the build fast while staying close to optimal.
-// =============================================================================
+// Bounding Volume Hierarchy: the ray-tracing acceleration structure. Triangles
+// are grouped into a tree of nested AABBs so a ray descends only into boxes it
+// actually hits, turning per-ray cost from O(N) into ~O(log N). Built top-down
+// with a binned Surface Area Heuristic (~12 buckets/axis) by default.
 
 namespace bvh {
 
@@ -47,12 +34,10 @@ struct Tri {
     const texture* tex = nullptr;
 };
 
-// Geometry-only, cache-hot record used in the leaf intersection loop. One per
-// triangle, parallel to the BVH's Tri array. Traversal touches ONLY this (36
-// bytes: v0 + two precomputed edges) instead of dragging the ~150-byte
-// shading-fat Tri through cache on every triangle test; the full Tri is read
-// once, after a hit, for shading. This geometry/shading split is the single
-// biggest CPU win over the naive layout — it's the core of how Embree stays hot.
+// Geometry-only, cache-hot record used in the leaf intersection loop, parallel
+// to the Tri array. Traversal touches ONLY this (36 bytes: v0 + two precomputed
+// edges) instead of dragging the shading-fat Tri through cache on every test;
+// the full Tri is read once, after a hit, for shading.
 struct TriISect { vec3 v0, e1, e2; };
 
 // Result of the nearest-hit query.
@@ -61,10 +46,9 @@ struct Hit {
     int   tri = -1;      // index of the hit triangle (use BVH::tri(idx)), -1 = miss
 };
 
-// How the tree is split during construction. The build strategy trades build
-// speed against traversal quality, which is the whole point of the comparison
-// study: SAH (best tree, slower build), Median (cheap, decent), Morton (fastest
-// build, lower-quality tree).
+// Split heuristic used when building a tree, trading build speed against
+// traversal quality: SAH (best tree, slower build) for the static scene,
+// Morton (fastest build) for the per-frame dynamic tree, Median in between.
 enum BuildStrategy { SAH = 0, Median = 1, Morton = 2 };
 
 class BVH {

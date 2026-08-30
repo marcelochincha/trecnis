@@ -1,6 +1,5 @@
 #include <game/sr_scene.hpp>
 #include <render/raytrace/sr_raytrace.hpp>
-#include <render/raytrace/sr_ocl.hpp>
 #include <core/sr_texture.hpp>
 #include <algorithm>
 #include <cmath>

@@ -17,6 +17,7 @@
 # IDE / editor
 .vscode/
 .idea/
+.claude/
 .DS_Store
 *.swp
 *~
