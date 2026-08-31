@@ -6,10 +6,11 @@
 #include <core/sr_framebuffer.hpp>
 #include <render/raytrace/cpu_tracer.hpp>
 
-// A render backend produces a full frame from a RenderScene. The three
-// implementations (CPU SAH BVH, Embree, OpenCL) are all compiled in and chosen
-// at runtime, so there is a single dispatch point instead of scattered enum /
-// #ifdef branches.
+// A render backend produces a full frame from a RenderScene. Every mode is a
+// backend behind this one interface: the raster fallback plus the three ray
+// tracers (CPU SAH BVH, Embree, OpenCL). They are all compiled in and chosen at
+// runtime, so there is a single dispatch point instead of a raster/raytrace
+// branch and scattered enum / #ifdef checks.
 struct IRenderBackend {
     virtual ~IRenderBackend() = default;
     virtual const char* name() const = 0;
@@ -26,10 +27,11 @@ struct IRenderBackend {
     virtual void on_scene_changed() {}
 };
 
-// Owns the shared CPU worker pool and the concrete backends, and holds the
-// runtime backend selection. The game app builds a RenderScene each frame and
-// calls render(); everything backend-specific lives behind here.
-class RaytraceRenderer {
+// The single render entry point. Owns the shared CPU worker pool and every
+// concrete backend (raster + ray tracers), and holds the runtime selection. The
+// game app builds a RenderScene each frame and calls render(); nothing backend-
+// or mode-specific leaks out.
+class Renderer {
 public:
     void init(int num_workers, int max_bounces, float ambient, float shadow_eps);
     void shutdown();

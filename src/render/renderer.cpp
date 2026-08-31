@@ -1,16 +1,73 @@
-#include <render/raytrace/backend.hpp>
+#include <render/renderer.hpp>
 #include <render/raytrace/bvh_accel.hpp>
 #include <render/raytrace/sr_raytrace.hpp>   // SUN_DIR, camera math via render_scene
 #include <render/raytrace/sr_ocl.hpp>
+#include <render/raster/sr_renderer.hpp>     // render_mesh / render_skybox (raster backend)
 #include <cmath>
 
 #ifdef WITH_EMBREE
 #include <render/raytrace/embree_accel.hpp>
 #endif
 
-// ---- CPU SAH BVH backend ----------------------------------------------------
-
 namespace {
+
+// ---- Raster backend ---------------------------------------------------------
+// The CPU forward rasterizer as a first-class backend. Draws the skybox, each
+// RasterItem flat-shaded, then projected planar shadows for shadow-casters.
+class RasterBackend : public IRenderBackend {
+public:
+    const char* name() const override { return "RASTER"; }
+    bool available() const override { return true; }
+
+    void render(RenderScene& s, framebuffer& fb) override {
+        const camera& cam = *s.cam;
+        if (s.skybox && s.skybox_enabled)
+            render_skybox(fb, cam, const_cast<std::array<texture,6>&>(*s.skybox));
+        if (!s.raster_items) return;
+
+        renderConfig cfg;
+        for (const RasterItem& it : *s.raster_items) {
+            if (!it.geo) continue;
+            cfg.baseColor = it.color;
+            render_mesh(fb, cam, *it.geo, cfg);
+        }
+        draw_shadows(s, fb, cam);
+    }
+
+private:
+    // Squash shadow-casters onto the ground plane along SUN_DIR and draw them
+    // flat dark. Same projective-shadow trick the old raster path used.
+    static void draw_shadows(RenderScene& s, framebuffer& fb, const camera& cam) {
+        const vec3  L       = SUN_DIR;
+        const float plane_y = 0.02f;
+        mat4 S(1.0f);
+        S(0,1) = -L.x/L.y;  S(1,1) = 0.0f;  S(2,1) = -L.z/L.y;
+        S(0,3) = (L.x/L.y)*plane_y;  S(1,3) = plane_y;  S(2,3) = (L.z/L.y)*plane_y;
+
+        renderConfig scfg;
+        scfg.baseColor = 0xFF1A1A1A;
+        scfg.ignoreLight = true;
+
+        mesh tmp;
+        for (const RasterItem& it : *s.raster_items) {
+            if (!it.geo || !it.shadow) continue;
+            const mesh& m = *it.geo;
+            mat4 MS = S * m.modelMatrix();
+            tmp.vertices.clear();
+            tmp.vertices.reserve(m.vertices.size());
+            for (const vertex& v : m.vertices) {
+                vec4 w = MS * v.p;
+                tmp.vertices.push_back({ vec3(w.x,w.y,w.z), v.t });
+            }
+            tmp.faces = m.faces;
+            tmp._modelMatrixDirty = true;
+            tmp.inverseFaces = false; render_mesh(fb, cam, tmp, scfg);
+            tmp.inverseFaces = true;  render_mesh(fb, cam, tmp, scfg);
+        }
+    }
+};
+
+// ---- CPU SAH BVH backend ----------------------------------------------------
 
 class CpuBvhBackend : public IRenderBackend {
 public:
@@ -124,31 +181,32 @@ private:
 
 } // namespace
 
-// ---- RaytraceRenderer -------------------------------------------------------
+// ---- Renderer ---------------------------------------------------------------
 
-void RaytraceRenderer::init(int num_workers, int max_bounces, float ambient, float shadow_eps) {
+void Renderer::init(int num_workers, int max_bounces, float ambient, float shadow_eps) {
     cpu_.start(num_workers);
-    backends_.push_back(new CpuBvhBackend(cpu_));
+    backends_.push_back(new RasterBackend());        // 0: always-available fallback
+    backends_.push_back(new CpuBvhBackend(cpu_));     // 1: CPU SAH BVH
 #ifdef WITH_EMBREE
     backends_.push_back(new EmbreeBackend(cpu_));
 #endif
     backends_.push_back(new OpenClBackend(max_bounces, ambient, shadow_eps));
-    cur_ = 0;
+    cur_ = 1;  // start on the CPU ray tracer, not the raster fallback
 }
 
-void RaytraceRenderer::shutdown() {
+void Renderer::shutdown() {
     for (IRenderBackend* b : backends_) delete b;
     backends_.clear();
     cpu_.stop();
 }
 
-void RaytraceRenderer::upload_static(const bvh::BVH& static_bvh,
+void Renderer::upload_static(const bvh::BVH& static_bvh,
                                      const std::array<texture, 6>& skybox,
                                      const std::vector<bvh::Tri>& emissive) {
     for (IRenderBackend* b : backends_) b->upload_static(static_bvh, skybox, emissive);
 }
 
-void RaytraceRenderer::reload_scene(const bvh::BVH& static_bvh,
+void Renderer::reload_scene(const bvh::BVH& static_bvh,
                                     const std::array<texture, 6>& skybox,
                                     const std::vector<bvh::Tri>& emissive) {
     for (IRenderBackend* b : backends_) {
@@ -157,11 +215,11 @@ void RaytraceRenderer::reload_scene(const bvh::BVH& static_bvh,
     }
 }
 
-void RaytraceRenderer::render(RenderScene& scene, framebuffer& fb) {
+void Renderer::render(RenderScene& scene, framebuffer& fb) {
     backends_[cur_]->render(scene, fb);
 }
 
-void RaytraceRenderer::cycle(int dir) {
+void Renderer::cycle(int dir) {
     int n = (int)backends_.size();
     for (int step = 0; step < n; ++step) {
         cur_ = (cur_ + (dir < 0 ? n - 1 : 1)) % n;

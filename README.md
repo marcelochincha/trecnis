@@ -6,16 +6,15 @@ into a single-application game runtime with unified render backends.
 
 ## Rendering
 
-Ray tracing is the primary render path; a software rasterizer is kept as a CPU
-fallback. The tracer keeps **two BVHs** — a static tree for scenery and a
-dynamic tree rebuilt every frame for moving objects (SAH / Median / Morton
-build strategies).
-
-Three ray-trace backends sit behind one interface and are switched at runtime
-(`[G]`), all compiled in:
+Every render mode is a **backend behind one interface** (`Renderer`), all
+compiled in and switched at runtime (`[G]` / `[Tab]`) — there is a single
+dispatch point, no raster/raytrace branch. The ray tracers keep **two BVHs** —
+a static tree for scenery and a dynamic tree rebuilt every frame for moving
+objects (SAH / Median / Morton build strategies).
 
 | Backend      | Notes                                             |
 |--------------|---------------------------------------------------|
+| Raster       | CPU forward rasterizer (always-available fallback)|
 | CPU SAH BVH  | Multithreaded software tracer (worker pool)       |
 | Embree       | Intel Embree kernels over the same triangles      |
 | OpenCL GPU   | Whole-frame trace on the GPU (if a device exists) |
@@ -54,13 +53,11 @@ Flags: `--width`, `--height`, `--fps`, `--threads <n>` (`-1` = all cores),
 | `W A S D` + mouse | Fly / look                           |
 | `Space` ×2     | Toggle walk / fly                       |
 | Mouse wheel    | Move speed                              |
-| `Tab`          | Ray trace ↔ raster                      |
-| `G`            | Cycle ray-trace backend                 |
+| `G` / `Tab`    | Cycle render backend (next / previous)  |
 | `B`            | BVH ↔ brute force                       |
 | `V` / `N`      | BVH wireframe / normals overlay         |
 | `M`            | Options menu                            |
 | `H`            | Compact HUD                             |
-| `P`            | Play character animation (Character scene) |
 | `Esc`          | Close menu / quit                       |
 
 ## Layout
@@ -69,10 +66,14 @@ Flags: `--width`, `--height`, `--fps`, `--threads <n>` (`-1` = all cores),
 src/
   core/            framebuffer, camera, geometry, texture, text
   render/
-    raytrace/      BVH, acceleration interfaces, CPU tracer, backends
-    raster/        software rasterizer (fallback)
-    render_scene.hpp
-  game/            app: scenes, HUD, skinning
+    renderer.{hpp,cpp}  single entry point; owns every backend
+    render_scene.hpp    the per-frame view the game fills
+    raytrace/      BVH, acceleration interfaces, CPU tracer, ray backends
+    raster/        CPU forward rasterizer
+  engine/
+    anim/          skinning, procedural character, camera animation
+    assets/        OBJ + texture loaders
+  game/            app: scene, HUD, input
   math/ io/ sound/
   main.cpp
 ```

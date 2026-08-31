@@ -6,6 +6,16 @@
 #include <render/raytrace/accel.hpp>  // ISceneAccel
 #include <core/sr_camera.hpp>         // camera
 #include <core/sr_texture.hpp>        // texture
+#include <core/sr_geometry.hpp>       // mesh
+
+// One mesh to draw in the raster backend, with an explicit flat material colour
+// and whether it casts a projected planar shadow. The raster path is a peer
+// backend, so it consumes the same RenderScene as the ray tracers.
+struct RasterItem {
+    const mesh* geo    = nullptr;
+    uint32_t    color  = 0xFFFFFFFF;
+    bool        shadow = false;
+};
 
 // A per-frame, read-only view of everything a render backend needs to draw a
 // frame. The game app fills one of these each frame; the render/ subsystem
@@ -33,6 +43,10 @@ struct RenderScene {
     // Active CPU-side acceleration structure (our BVH or Embree). Set by the
     // backend right before it runs the CPU tracer; unused by the GPU backend.
     const ISceneAccel* accel = nullptr;
+
+    // Raster fallback geometry. The raster backend draws these flat-shaded with
+    // the skybox; the ray tracers ignore them (they use the BVHs above).
+    const std::vector<RasterItem>* raster_items = nullptr;
 
     // Lighting / environment.
     const std::vector<bvh::Tri>* emissive = nullptr;  // area lights (NEE)

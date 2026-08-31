@@ -1,6 +1,6 @@
 #include <game/sr_hud.hpp>
+#include <game/sr_game.hpp>
 #include <render/raytrace/sr_raytrace.hpp>
-#include <game/sr_scene.hpp>
 #include <algorithm>
 #include <cstdio>
 
@@ -9,37 +9,6 @@ double tick_ms(uint64_t& since) {
     double ms = (now - since) * 1000.0 / SDL_GetPerformanceFrequency();
     since = now;
     return ms;
-}
-
-void render_raster_shadows(Game* e) {
-    const vec3  L       = SUN_DIR;
-    const float plane_y = 0.02f;
-    mat4 S(1.0f);
-    S(0,1) = -L.x/L.y;  S(1,1) = 0.0f;  S(2,1) = -L.z/L.y;
-    S(0,3) = (L.x/L.y)*plane_y;
-    S(1,3) = plane_y;
-    S(2,3) = (L.z/L.y)*plane_y;
-
-    renderConfig scfg;
-    scfg.baseColor   = 0xFF1A1A1A;
-    scfg.ignoreLight = true;
-
-    mesh tmp;
-    for (auto& [name, mp] : e->meshes) {
-        if (name == "FLOOR") continue;
-        const mesh& m = *mp;
-        mat4 MS = S * m.modelMatrix();
-        tmp.vertices.clear();
-        tmp.vertices.reserve(m.vertices.size());
-        for (const vertex& v : m.vertices) {
-            vec4 w = MS * v.p;
-            tmp.vertices.push_back({ vec3(w.x,w.y,w.z), v.t });
-        }
-        tmp.faces              = m.faces;
-        tmp._modelMatrixDirty  = true;
-        tmp.inverseFaces = false; render_mesh(e->fb, e->cam, tmp, scfg);
-        tmp.inverseFaces = true;  render_mesh(e->fb, e->cam, tmp, scfg);
-    }
 }
 
 static void draw_aabb_wire(framebuffer& fb, const camera& cam, const AABB& b, uint32_t color) {
@@ -96,27 +65,26 @@ void draw_normals_debug(Game* e) {
         draw_tri_vn(e->static_bvh.tri((int)i));
 }
 
-const int MENU_ITEMS = 9;
+const int MENU_ITEMS = 8;
 
 static const char* menu_label(int i) {
     static const char* L[MENU_ITEMS] = {
-        "Render mode","Backend","Acceleration","Show BVH",
-        "Reflections","Ray bounces","Static build","Dyn build","Samples"
+        "Backend","Acceleration","Show BVH","Reflections",
+        "Ray bounces","Static build","Dyn build","Samples"
     };
     return L[i];
 }
 
 static const char* menu_value(const Game* e, int i) {
     switch (i) {
-        case 0: return e->raytrace_mode ? "Raytrace"   : "Raster";
-        case 1: return e->renderer.current_name();
-        case 2: return e->use_bvh       ? "BVH"        : "Brute force";
-        case 3: return e->show_bvh      ? "On"         : "Off";
-        case 4: return e->reflections   ? "On"         : "Off";
-        case 5: { static char b[8]; snprintf(b,sizeof(b),"%d",e->max_bounces); return b; }
-        case 6: return e->build_strategy==bvh::SAH    ? "SAH"
+        case 0: return e->renderer.current_name();
+        case 1: return e->use_bvh       ? "BVH"        : "Brute force";
+        case 2: return e->show_bvh      ? "On"         : "Off";
+        case 3: return e->reflections   ? "On"         : "Off";
+        case 4: { static char b[8]; snprintf(b,sizeof(b),"%d",e->max_bounces); return b; }
+        case 5: return e->build_strategy==bvh::SAH    ? "SAH"
                      : e->build_strategy==bvh::Median ? "Median" : "Morton";
-        case 7: return e->dynamic_build_strategy==bvh::SAH    ? "SAH"
+        case 6: return e->dynamic_build_strategy==bvh::SAH    ? "SAH"
                      : e->dynamic_build_strategy==bvh::Median ? "Median" : "Morton";
         default: { static char b[8]; snprintf(b,sizeof(b),"%d",e->spp); return b; }
     }
@@ -124,26 +92,25 @@ static const char* menu_value(const Game* e, int i) {
 
 void menu_apply(Game* e, int dir) {
     switch (e->menu_cursor) {
-        case 0: e->raytrace_mode = !e->raytrace_mode; break;
-        case 1: e->renderer.cycle(dir); break;
-        case 2: e->use_bvh       = !e->use_bvh;       break;
-        case 3: e->show_bvh      = !e->show_bvh;      break;
-        case 4: e->reflections = !e->reflections; break;
-        case 5: e->max_bounces = 1+((e->max_bounces-1+(dir<0?2:1))%3); break;
-        case 6: {
+        case 0: e->renderer.cycle(dir); break;
+        case 1: e->use_bvh       = !e->use_bvh;       break;
+        case 2: e->show_bvh      = !e->show_bvh;      break;
+        case 3: e->reflections   = !e->reflections;   break;
+        case 4: e->max_bounces = 1+((e->max_bounces-1+(dir<0?2:1))%3); break;
+        case 5: {
             int s = (int)e->build_strategy;
             s = (s+(dir<0?2:1))%3;
             e->build_strategy = (bvh::BuildStrategy)s;
-            rebuild_field(e);
+            game_rebuild_static(e);
             break;
         }
-        case 7: {
+        case 6: {
             int s = (int)e->dynamic_build_strategy;
             s = (s+(dir<0?2:1))%3;
             e->dynamic_build_strategy = (bvh::BuildStrategy)s;
             break;
         }
-        case 8: {
+        case 7: {
             static const int spps[] = {1,2,4,8};
             int cur = 0;
             for (int i = 0; i < 4; ++i) if (spps[i] == e->spp) { cur = i; break; }

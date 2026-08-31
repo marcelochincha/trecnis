@@ -46,7 +46,7 @@ struct mesh
     std::vector<uint32_t> src_vertex;
 
     // Optional diffuse texture (borrowed, not owned). When set, the ray tracer's
-    // dynamic path (build_scene_tris) samples it via the per-vertex UVs in
+    // dynamic path (fold_mesh) samples it via the per-vertex UVs in
     // `vertices[].t` instead of a flat albedo. Null = untextured.
     const texture* tex = nullptr;
 

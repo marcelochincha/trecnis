@@ -3,11 +3,9 @@
 #include <SDL2/SDL.h>
 #include <render/raster/sr_renderer.hpp>
 #include <render/render_scene.hpp>
-#include <render/raytrace/backend.hpp>
+#include <render/renderer.hpp>
 #include <engine/anim/skinned_mesh.hpp>
 #include <render/raytrace/bvh.hpp>
-#include <unordered_map>
-#include <string>
 #include <vector>
 #include <array>
 
@@ -23,7 +21,6 @@ struct Game {
     float move_speed = 6.0f;   // camera fly speed, adjusted by the mouse wheel
 
     float time          = 0.0f;
-    bool  raytrace_mode = true;
     bool  show_bvh      = false;
     int   bvh_debug_depth = 12;  // wireframe: draw only nodes up to this depth
 
@@ -40,9 +37,10 @@ struct Game {
     bool   fly_mode     = true;
     Uint32 last_space_ms = 0;
 
-    std::unordered_map<std::string, mesh*> meshes;
-    std::vector<RTTri> rt_tris;
-    std::unordered_map<std::string, float> reflectivity_map;
+    std::vector<RTTri> rt_tris;           // dynamic geometry, folded each frame
+
+    // Per-frame draw list handed to the raster backend (floor + character).
+    std::vector<RasterItem> raster_items;
 
     std::vector<bvh::Tri> emissive_tris; // area lights collected from static_bvh
 
@@ -54,22 +52,25 @@ struct Game {
     bvh::BuildStrategy dynamic_build_strategy = bvh::Morton;
     double             static_build_ms = 0.0;
 
-    mesh*    field_mesh = nullptr;
+    mesh*    field_mesh = nullptr;               // static scenery, raster mirror
+    vec3     floor_albedo = vec3(0.55f, 0.55f, 0.58f);
     bvh::BVH static_bvh;
 
-    // Skinned character. The mesh lives in `meshes["character"]`, so
-    // build_scene_tris folds its per-frame deformed triangles into the DYNAMIC
-    // BVH every frame — skinning + dynamic BVH rebuild coexist.
+    // Skinned character (the one dynamic object). Its per-frame deformed
+    // triangles are folded into the DYNAMIC BVH every frame — skinning and the
+    // dynamic BVH rebuild coexist.
     SkinnedMesh skin;
-    mesh*       skin_mesh = nullptr;
-    float       anim_time = 0.0f;   // skinning clock (seconds)
+    mesh*       character  = nullptr;
+    vec3        char_albedo = vec3(0.80f, 0.35f, 0.30f);
+    float       char_rough  = 0.6f;
+    float       anim_time   = 0.0f;   // skinning clock (seconds)
 
     std::array<texture, 6> skybox_faces;
     bool skybox_enabled = true;
 
-    // Ray-trace render subsystem: owns the worker pool and the CPU/Embree/OpenCL
-    // backends, and holds the runtime backend selection.
-    RaytraceRenderer renderer;
+    // The single render entry point: owns the worker pool and every backend
+    // (raster + CPU/Embree/OpenCL ray tracers), and holds the runtime selection.
+    Renderer renderer;
     int num_workers = 4;   // configured CPU thread count (from --threads)
 
     Game(int width, int height) : fb(width, height) {}
