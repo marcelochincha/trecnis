@@ -1,4 +1,4 @@
-#include <render/raster/sr_renderer.hpp>
+#include <render/raster/sr_raster.hpp>
 #include <cmath>
 #include <algorithm>
 
@@ -343,10 +343,7 @@ void render_mesh(framebuffer &fb, const camera &cam, const mesh &m, renderConfig
         vec3 l_v1 = mv * vec4(m.vertices[tri.v1].p.x, m.vertices[tri.v1].p.y, m.vertices[tri.v1].p.z, 1.0f);
         vec3 l_v2 = mv * vec4(m.vertices[tri.v2].p.x, m.vertices[tri.v2].p.y, m.vertices[tri.v2].p.z, 1.0f);
 
-        // Not get normal
         vec3 normal = normalize(get_normal(l_v0, l_v1, l_v2));
-        if (m.inverseFaces)
-            normal = -normal;
         // Compute cross
         float d = dot(normal, vec3(0.0f, 0.0f, -1.0f));
         float lightFactor;
@@ -396,10 +393,10 @@ void render_mesh(framebuffer &fb, const camera &cam, const mesh &m, renderConfig
             vec2 e0 = screen_v1 - screen_v0;
             vec2 e1 = screen_v2 - screen_v0;
 
+            // Backface cull: CCW = front-facing, which projects to a negative
+            // signed area (convert_to_fb flips Y). Double-sided meshes opt out.
             float area = e0.x * e1.y - e0.y * e1.x;
-            if (m.inverseFaces)
-                area = -area;
-            if (area < 0)
+            if (config.backfaceCull && !m.double_sided && area > 0.0f)
                 continue;
 
             vec3 uvw0 = vec3(base.uv.x, base.uv.y, 1.0f) / base.pos.w;

@@ -14,13 +14,66 @@ objects (SAH / Median / Morton build strategies).
 
 | Backend      | Notes                                             |
 |--------------|---------------------------------------------------|
-| Raster       | CPU forward rasterizer (always-available fallback)|
+| Raster       | CPU forward rasterizer, flat-shaded debug view (textured) |
 | CPU SAH BVH  | Multithreaded software tracer (worker pool)       |
 | Embree       | Intel Embree kernels over the same triangles      |
 | OpenCL GPU   | Whole-frame trace on the GPU (if a device exists) |
 
 The game fills a small `RenderScene` view each frame, so `render/` is fully
 decoupled from the game logic.
+
+## Geometry & Rendering Conventions
+
+All backends consume the **same geometry**. The only legitimate difference
+between them is the *lighting model* — the raster is a flat-shaded (optionally
+textured) debug view, the ray tracers do global illumination — never face
+orientation.
+
+### Coordinate system & handedness
+- Right-handed world space, **+Y up**; the camera looks down **-Z** in eye space.
+- Projection is a standard right-handed OpenGL perspective (`w = -z_eye`).
+- After the perspective divide, NDC x,y ∈ [-1,1]; the raster flips Y when
+  mapping to the framebuffer, so screen row 0 is the top.
+
+### Winding & normals (single source of truth)
+- **CCW = front-facing.** The canonical face normal is
+  `normalize(cross(v1 - v0, v2 - v0))`.
+- **Winding is authoritative** — there is no per-mesh normal-flip flag.
+  Geometry is authored/loaded with correct CCW winding, so the raster (which
+  recomputes the normal from winding) and the ray tracers derive identical
+  orientations.
+- Meshes visible from both sides set `mesh.double_sided` (floor, shadow quads,
+  skybox) instead of flipping winding.
+
+### Backface culling
+- Global default **ON** (`renderConfig.backfaceCull`), per-mesh opt-out via
+  `mesh.double_sided`.
+- **Raster:** discards a triangle when its screen-space signed area is `> 0`
+  (front faces project to a *negative* area because `convert_to_fb` flips Y).
+- **Ray tracers:** never cull. The shading normal is flipped to face the ray
+  (`if (dot(n, dir) > 0) n = -n`), so closed meshes stay watertight (no light
+  leaks) and thin geometry is implicitly two-sided.
+
+### Shared frame pipeline
+
+```
+        RenderScene (per frame, filled by the game)
+                        |
+        +---------------+-----------------+
+        v                                 v
+   RASTER backend                    RAY-TRACE backends
+   (flat-shaded debug)               (CPU BVH / Embree / OpenCL)
+        |                                 |
+   for each mesh:                     build / refit BVH
+     MVP transform                    primary rays --> nearest hit
+     clip vs 6 planes (Sutherland-Hodgman)      |
+     perspective divide               shade: sky + area lights (NEE)
+     Y-flip -> screen                        + reflections (bounces)
+     backface cull (area > 0)         double_sided -> flip normal to ray
+     scanline fill + depth test              |
+        v                                 v
+              framebuffer (colour + depth)
+```
 
 ## Build
 

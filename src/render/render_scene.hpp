@@ -8,6 +8,16 @@
 #include <core/sr_texture.hpp>        // texture
 #include <core/sr_geometry.hpp>       // mesh
 
+// A dynamic omni (point) light: no geometry, so it can move freely each frame.
+// Shaded deterministically like the area lights — one hard shadow ray and an
+// inverse-square falloff — so it adds zero noise. `intensity` scales the HDR
+// radiance; effective contribution is color * intensity / dist^2.
+struct PointLight {
+    vec3  pos       = vec3(0.0f, 3.0f, 0.0f);
+    vec3  color     = vec3(1.0f, 1.0f, 1.0f);
+    float intensity = 10.0f;
+};
+
 // One mesh to draw in the raster backend, with an explicit flat material colour
 // and whether it casts a projected planar shadow. The raster path is a peer
 // backend, so it consumes the same RenderScene as the ray tracers.
@@ -50,11 +60,23 @@ struct RenderScene {
 
     // Lighting / environment.
     const std::vector<bvh::Tri>* emissive = nullptr;  // area lights (NEE)
+    const std::vector<PointLight>* point_lights = nullptr;  // dynamic omni lights
     const std::array<texture, 6>* skybox  = nullptr;
     bool skybox_enabled = true;
 
+    // Solid background used when the skybox is off: the colour a ray returns on
+    // a miss, and the raster/framebuffer clear colour. Keeps every backend's
+    // background identical.
+    vec3 bg_color = vec3(0.0f, 0.0f, 0.0f);
+
     // Shading options.
+    bool sun_enabled = true;   // additive directional sun on top of sky + emissives
     bool reflections = true;
-    int  max_bounces = 1;
-    int  spp         = 1;
+    int  max_bounces = 1;      // recursive specular reflection depth
+
+    // Deterministic one-bounce diffuse GI (point/sun light bleed). Fixed
+    // Hammersley directions rotated per point — noise-free, no denoiser needed.
+    bool  gi_enabled  = true;
+    int   gi_samples  = 4;     // hemisphere rays per primary diffuse hit
+    float gi_strength = 1.0f;  // scales the indirect diffuse contribution
 };

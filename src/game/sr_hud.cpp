@@ -65,12 +65,12 @@ void draw_normals_debug(Game* e) {
         draw_tri_vn(e->static_bvh.tri((int)i));
 }
 
-const int MENU_ITEMS = 8;
+const int MENU_ITEMS = 7;
 
 static const char* menu_label(int i) {
     static const char* L[MENU_ITEMS] = {
         "Backend","Acceleration","Show BVH","Reflections",
-        "Ray bounces","Static build","Dyn build","Samples"
+        "Ray bounces","Static build","Dyn build"
     };
     return L[i];
 }
@@ -84,9 +84,8 @@ static const char* menu_value(const Game* e, int i) {
         case 4: { static char b[8]; snprintf(b,sizeof(b),"%d",e->max_bounces); return b; }
         case 5: return e->build_strategy==bvh::SAH    ? "SAH"
                      : e->build_strategy==bvh::Median ? "Median" : "Morton";
-        case 6: return e->dynamic_build_strategy==bvh::SAH    ? "SAH"
-                     : e->dynamic_build_strategy==bvh::Median ? "Median" : "Morton";
-        default: { static char b[8]; snprintf(b,sizeof(b),"%d",e->spp); return b; }
+        default: return e->dynamic_build_strategy==bvh::SAH    ? "SAH"
+                      : e->dynamic_build_strategy==bvh::Median ? "Median" : "Morton";
     }
 }
 
@@ -108,14 +107,6 @@ void menu_apply(Game* e, int dir) {
             int s = (int)e->dynamic_build_strategy;
             s = (s+(dir<0?2:1))%3;
             e->dynamic_build_strategy = (bvh::BuildStrategy)s;
-            break;
-        }
-        case 7: {
-            static const int spps[] = {1,2,4,8};
-            int cur = 0;
-            for (int i = 0; i < 4; ++i) if (spps[i] == e->spp) { cur = i; break; }
-            cur = (cur + (dir < 0 ? 3 : 1)) % 4;
-            e->spp = spps[cur];
             break;
         }
     }

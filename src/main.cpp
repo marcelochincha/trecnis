@@ -2,11 +2,12 @@
 
 #include <iostream>
 #include <array>
+#include <cstring>
 
 #include <SDL2/SDL.h>
 
 #include <math/sr_math.hpp>
-#include <render/raster/sr_renderer.hpp>
+#include <render/raster/sr_raster.hpp>
 #include <core/sr_camera.hpp>
 #include <core/sr_texture.hpp>
 #include <core/sr_text.hpp>

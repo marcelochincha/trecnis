@@ -2,9 +2,10 @@
 #include <core/sr_texture.hpp>
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 
 const vec3  SUN_DIR    = normalize(vec3(-0.3f, 1.0f, -0.2f));
-const float AMBIENT    = 0.15f;
+const float AMBIENT    = 0.0f;
 const float SHADOW_EPS = 1e-4f;
 
 uint32_t pack(vec3 c) {
@@ -78,23 +79,38 @@ static vec2 tri_interp_uv(const bvh::Tri& tr, const vec3& P) {
 
 static vec3 reflect_dir(vec3 d, vec3 n) { return d - n * (2.0f * dot(d, n)); }
 
-static float randf(uint32_t& s) {
-    s ^= s << 13;
-    s ^= s >> 17;
-    s ^= s << 5;
-    return (s >> 8) * (1.0f / 16777216.0f);
+// Deterministic per-surface-point hash (no RNG state, stable across frames):
+// used to rotate the fixed GI sample set so neighbouring points don't share the
+// exact same directions (breaks banding without introducing temporal noise).
+static uint32_t hash_pos(const vec3& p) {
+    auto bits = [](float f){ uint32_t u; std::memcpy(&u, &f, 4); return u; };
+    uint32_t h = bits(p.x) * 73856093u ^ bits(p.y) * 19349663u ^ bits(p.z) * 83492791u;
+    h ^= h >> 16; h *= 0x7feb352du; h ^= h >> 15; h *= 0x846ca68bu; h ^= h >> 16;
+    return h;
 }
 
-vec3 trace_ray(const ray& r, const RenderScene& scene, int depth, uint32_t& seed, bool skip_emission) {
+// Van der Corput radical inverse base 2 — the second Hammersley coordinate for
+// a low-discrepancy, well-spread set of hemisphere directions.
+static float radinv2(uint32_t i) {
+    i = (i << 16) | (i >> 16);
+    i = ((i & 0x55555555u) << 1) | ((i & 0xAAAAAAAAu) >> 1);
+    i = ((i & 0x33333333u) << 2) | ((i & 0xCCCCCCCCu) >> 2);
+    i = ((i & 0x0F0F0F0Fu) << 4) | ((i & 0xF0F0F0F0u) >> 4);
+    i = ((i & 0x00FF00FFu) << 8) | ((i & 0xFF00FF00u) >> 8);
+    return i * 2.3283064365386963e-10f;
+}
+
+vec3 trace_ray(const ray& r, const RenderScene& scene, int depth) {
     SceneHit hit;
     if (!scene.accel->intersect(r.origin, r.direction, hit))
         return scene.skybox_enabled ? sample_sky(*scene.skybox, r.direction)
-                                     : vec3(AMBIENT, AMBIENT, AMBIENT);
+                                     : scene.bg_color;
 
     const bvh::Tri& tr = *hit.tri;
 
+    // Emissive surfaces are the lights themselves: read out their emission.
     if (tr.emission.x + tr.emission.y + tr.emission.z > 0.0f)
-        return skip_emission ? vec3(0.0f, 0.0f, 0.0f) : tr.emission;
+        return tr.emission;
 
     vec3 P      = r.origin + r.direction * hit.t;
     vec3 N_geom = dot(tr.normal, r.direction) < 0.0f ? tr.normal : -tr.normal;
@@ -108,41 +124,50 @@ vec3 trace_ray(const ray& r, const RenderScene& scene, int depth, uint32_t& seed
         albedo = sample_face(*tr.tex, uv.x, uv.y);
     }
 
-    const std::vector<bvh::Tri>& lights = *scene.emissive;
+    // ---- Direct lighting (deterministic, hard shadows) ---------------------
+    // Ambient fill + an optional directional sun, then every area light treated
+    // as a point light at its centroid. No random sampling, so every shadow is
+    // hard and the image is noise-free — classic ray tracing, not path tracing.
+    float mono = AMBIENT;   // grey ambient + sun term
+    if (scene.sun_enabled) {
+        ray shadow(P + N_geom * SHADOW_EPS, SUN_DIR);
+        if (!scene.accel->occluded(shadow.origin, shadow.direction, 1e30f))
+            mono += std::max(0.0f, dot(N, SUN_DIR)) * (1.0f - AMBIENT);
+    }
 
-    vec3 light_color;
-    if (lights.empty()) {
-        ray  shadow(P + N_geom * SHADOW_EPS, SUN_DIR);
-        bool in_shadow = scene.accel->occluded(shadow.origin, shadow.direction, 1e30f);
-        float diff = in_shadow ? 0.0f : std::max(0.0f, dot(N, SUN_DIR));
-        float l = AMBIENT + diff * (1.0f - AMBIENT);
-        light_color = vec3(l, l, l);
-    } else {
-        // NEE: pick one random emissive triangle, weight by N_lt (unbiased)
-        vec3 direct(0.0f, 0.0f, 0.0f);
-        int N_lt = (int)lights.size();
-        int li   = std::min((int)(randf(seed) * N_lt), N_lt - 1);
-        const bvh::Tri& lt = lights[li];
-        float r1 = randf(seed), r2 = randf(seed);
-        float sq1 = std::sqrt(r1);
-        vec3  lp    = lt.v0 * (1.0f - sq1) + lt.v1 * (sq1 * (1.0f - r2)) + lt.v2 * (sq1 * r2);
+    vec3 light_color(mono, mono, mono);
+    if (scene.emissive) for (const bvh::Tri& lt : *scene.emissive) {
+        vec3  lp    = (lt.v0 + lt.v1 + lt.v2) * (1.0f / 3.0f);  // centroid
         vec3  ldir  = lp - P;
         float ldist = std::sqrt(dot(ldir, ldir));
-        if (ldist >= 1e-4f) {
+        if (ldist < 1e-4f) continue;
+        ldir = ldir / ldist;
+        float NdotL = dot(N, ldir);
+        if (NdotL <= 0.0f) continue;
+        ray shadow(P + N_geom * SHADOW_EPS, ldir);
+        if (scene.accel->occluded(shadow.origin, shadow.direction, ldist - SHADOW_EPS)) continue;
+        vec3  e1      = lt.v1 - lt.v0, e2 = lt.v2 - lt.v0;
+        float lt_area = std::sqrt(dot(cross(e1, e2), cross(e1, e2))) * 0.5f;
+        float cos_lt  = std::fabs(dot(lt.normal, -ldir));
+        float G       = lt_area * cos_lt / (ldist * ldist);
+        light_color = light_color + lt.emission * (NdotL * G);
+    }
+
+    // Dynamic point lights: same deterministic treatment as the area lights —
+    // one hard shadow ray, inverse-square falloff, no geometry so they can move.
+    if (scene.point_lights) {
+        for (const PointLight& pl : *scene.point_lights) {
+            vec3  ldir  = pl.pos - P;
+            float ldist = std::sqrt(dot(ldir, ldir));
+            if (ldist < 1e-4f) continue;
             ldir = ldir / ldist;
             float NdotL = dot(N, ldir);
-            if (NdotL > 0.0f) {
-                ray shadow(P + N_geom * SHADOW_EPS, ldir);
-                if (!scene.accel->occluded(shadow.origin, shadow.direction, ldist - SHADOW_EPS)) {
-                    vec3  e1     = lt.v1 - lt.v0, e2 = lt.v2 - lt.v0;
-                    float lt_area = std::sqrt(dot(cross(e1, e2), cross(e1, e2))) * 0.5f;
-                    float cos_lt  = std::fabs(dot(lt.normal, -ldir));
-                    float G       = lt_area * cos_lt / (ldist * ldist);
-                    direct = lt.emission * (NdotL * G * (float)N_lt);
-                }
-            }
+            if (NdotL <= 0.0f) continue;
+            ray shadow(P + N_geom * SHADOW_EPS, ldir);
+            if (scene.accel->occluded(shadow.origin, shadow.direction, ldist - SHADOW_EPS)) continue;
+            float atten = pl.intensity / (ldist * ldist);
+            light_color = light_color + pl.color * (NdotL * atten);
         }
-        light_color = direct;
     }
 
     float k_d  = (1.0f - tr.metallic) + tr.metallic * tr.roughness;
@@ -150,18 +175,33 @@ vec3 trace_ray(const ray& r, const RenderScene& scene, int depth, uint32_t& seed
                        albedo.y * light_color.y,
                        albedo.z * light_color.z) * k_d;
 
-    if (!lights.empty() && depth < scene.max_bounces && tr.metallic < 0.5f) {
-        float di1 = randf(seed), di2 = randf(seed);
-        float phi   = 2.0f * 3.14159265f * di1;
-        float cos_t = std::sqrt(di2);
-        float sin_t = std::sqrt(std::max(0.0f, 1.0f - di2));
-        vec3 up = std::fabs(N.x) < 0.9f ? vec3(1.0f, 0.0f, 0.0f) : vec3(0.0f, 1.0f, 0.0f);
-        vec3 T  = normalize(cross(up, N));
-        vec3 B  = cross(N, T);
-        vec3 bd = T * (sin_t * std::cos(phi)) + B * (sin_t * std::sin(phi)) + N * cos_t;
-        vec3 ind = trace_ray(ray(P + N_geom * SHADOW_EPS, bd), scene, depth + 1, seed, true);
-        ind = vec3(std::min(ind.x, 2.0f), std::min(ind.y, 2.0f), std::min(ind.z, 2.0f));
-        local = local + vec3(albedo.x * ind.x, albedo.y * ind.y, albedo.z * ind.z) * k_d;
+    // ---- Indirect diffuse (deterministic one-bounce GI) --------------------
+    // Only from the camera-primary diffuse hit (depth == 0), so it is exactly
+    // one bounce and never recurses. A fixed, cosine-weighted set of hemisphere
+    // directions (Hammersley), rotated per surface point by a position hash so
+    // the pattern doesn't band — no RNG, so no fireflies and no temporal flicker.
+    // Each sample gathers the DIRECT lighting of whatever it hits (secondary
+    // call is forced terminal via a large depth: no specular, no further GI),
+    // which is how the moving point light bleeds colour onto nearby surfaces.
+    if (scene.gi_enabled && depth == 0 && k_d > 0.0f && tr.metallic < 0.5f) {
+        vec3 T = normalize(std::fabs(N.x) > 0.9f ? cross(N, vec3(0, 1, 0))
+                                                 : cross(N, vec3(1, 0, 0)));
+        vec3 B = cross(N, T);
+        float rot = (hash_pos(P) & 0xFFFFu) * (6.2831853f / 65535.0f);
+        int   NS  = std::max(1, scene.gi_samples);
+        vec3  gi(0.0f, 0.0f, 0.0f);
+        for (int i = 0; i < NS; ++i) {
+            float u1  = (i + 0.5f) / NS;
+            float phi = 6.2831853f * radinv2((uint32_t)i) + rot;
+            float rr  = std::sqrt(u1);
+            float sx  = rr * std::cos(phi), sy = rr * std::sin(phi);
+            float sz  = std::sqrt(std::max(0.0f, 1.0f - u1));
+            vec3  dir = normalize(T * sx + B * sy + N * sz);
+            gi = gi + trace_ray(ray(P + N_geom * SHADOW_EPS, dir), scene, 1 << 20);
+        }
+        gi = gi * (1.0f / NS);
+        local = local + vec3(albedo.x * gi.x, albedo.y * gi.y, albedo.z * gi.z)
+                        * (k_d * scene.gi_strength);
     }
 
     float cosV = std::max(0.0f, dot(N, -r.direction));
@@ -179,15 +219,10 @@ vec3 trace_ray(const ray& r, const RenderScene& scene, int depth, uint32_t& seed
         R = normalize(R - N_geom * RdotG);
         R = normalize(R + N_geom * 1e-4f);
     }
-    vec3 refl = trace_ray(ray(P + N_geom * SHADOW_EPS, R), scene, depth + 1, seed);
+    vec3 refl = trace_ray(ray(P + N_geom * SHADOW_EPS, R), scene, depth + 1);
 
     vec3 tint = tr.metallic > 0.5f ? albedo : vec3(1.0f, 1.0f, 1.0f);
     return local * (1.0f - spec) + vec3(refl.x * spec * tint.x,
                                         refl.y * spec * tint.y,
                                         refl.z * spec * tint.z);
-}
-
-vec3 trace_ray(const ray& r, const RenderScene& scene) {
-    uint32_t seed = 0;
-    return trace_ray(r, scene, 0, seed);
 }

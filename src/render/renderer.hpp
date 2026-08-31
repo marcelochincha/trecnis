@@ -59,6 +59,13 @@ public:
     bool        current_available() const { return backends_[cur_]->available(); }
     void        cycle(int dir);
 
+    // Directly select backend `i` (for tooling/measurement). No-op + false if it
+    // is out of range or unavailable.
+    bool        select(int i) {
+        if (i >= 0 && i < (int)backends_.size() && backends_[i]->available()) { cur_ = i; return true; }
+        return false;
+    }
+
 private:
     CpuTracer                    cpu_;
     std::vector<IRenderBackend*> backends_;   // owned

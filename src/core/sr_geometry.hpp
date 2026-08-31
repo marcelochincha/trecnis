@@ -56,7 +56,7 @@ struct mesh
     vec3 position = vec3(0.0f, 0.0f, 0.0f);
     vec3 rotation = vec3(0.0f, 0.0f, 0.0f);
     vec3 scale = vec3(1.0f, 1.0f, 1.0f);
-    bool inverseFaces = false; // Whether to invert normals for lighting calculations
+    bool double_sided = false; // Skip backface culling; visible from both sides
 
     void recalculateModelMatrix() const
     {

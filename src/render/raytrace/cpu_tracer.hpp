@@ -19,7 +19,11 @@ public:
 
 private:
     void run_stripe(int id);
+    void dispatch();                      // release the pool, block until the frame is done
     static int worker_entry(void* arg);
+
+    // Trace one horizontal stripe of the frame straight into the framebuffer.
+    void trace_stripe(int y0, int y1);
 
     static constexpr int MAX_WORKERS = 64;
 

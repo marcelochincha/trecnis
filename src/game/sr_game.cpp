@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <cstdio>
 #include <iostream>
 
 static const float kMouseSensitivity = 0.0025f;
@@ -86,7 +87,7 @@ static void fold_mesh(std::vector<bvh::Tri>& out, const mesh& m,
         const vertex& c = m.vertices[tri.v2];
         vec3 v0 = vec3(model * a.p), v1 = vec3(model * b.p), v2 = vec3(model * c.p);
         vec3 n  = normalize(cross(v1-v0, v2-v0));
-        bvh::Tri t{ v0, v1, v2, n, albedo, roughness };
+        bvh::Tri t{ v0, v1, v2, n, albedo, roughness};
         if (m.tex) { t.tex = m.tex; t.uv0 = a.t; t.uv1 = b.t; t.uv2 = c.t; }
         out.push_back(t);
     }
@@ -105,13 +106,12 @@ void game_rebuild_static(Game* e) {
     uint64_t t0 = SDL_GetPerformanceCounter();
 
     std::vector<bvh::Tri> tris;
-    add_box(tris, vec3(-8.f, -0.02f, -8.f), vec3(8.f, 0.f, 8.f), e->floor_albedo, 0.85f);
-    add_emissive_quad(tris, vec3(0.0f, 5.0f, 0.0f), 2.0f, 2.0f, vec3(6.f, 6.f, 6.f));
+    add_box(tris, vec3(-8.f, -0.02f, -8.f), vec3(8.f, 0.f, 8.f), e->floor_albedo, 0.01f);
+    //add_emissive_quad(tris, vec3(0.0f, 5.0f, 0.0f), 2.0f, 2.0f, vec3(6.f, 6.f, 6.f));
 
     delete e->field_mesh;
     e->field_mesh = make_raster_mesh(tris);
     e->static_bvh.build(std::move(tris), e->build_strategy);
-    e->skybox_enabled  = true;
     e->static_build_ms = (SDL_GetPerformanceCounter()-t0)*1000.0/SDL_GetPerformanceFrequency();
 
     e->emissive_tris.clear();
@@ -135,6 +135,11 @@ static void init_scene(Game* e) {
     delete e->character;
     e->character = cm;
     e->anim_time = 0.0f;
+
+    // One dynamic point light, warm-white, orbiting the character.
+    e->point_lights.clear();
+    e->point_lights.push_back(PointLight{ vec3(e->point_light_radius, e->point_light_height, 0.0f),
+                                          vec3(1.0f, 0.9f, 0.75f), 12.0f });
 
     game_rebuild_static(e);
     set_start_view(e, vec3(0.0f, 1.6f, 6.0f), vec3(0.0f, 1.2f, 0.0f));
@@ -166,13 +171,18 @@ static RenderScene make_render_scene(Game* e) {
     if (e->character)  e->raster_items.push_back({ e->character,  pack(e->char_albedo),  true  });
     s.raster_items = &e->raster_items;
 
-    s.emissive        = &e->emissive_tris;
+    s.emissive        = e->emissive_enabled ? &e->emissive_tris : nullptr;
+    s.point_lights    = e->point_light_enabled ? &e->point_lights : nullptr;
     s.skybox          = &e->skybox_faces;
     s.skybox_enabled  = e->skybox_enabled;
+    s.bg_color        = e->bg_color;
 
+    s.sun_enabled = e->sun_enabled;
     s.reflections = e->reflections;
     s.max_bounces = e->max_bounces;
-    s.spp         = e->spp;
+    s.gi_enabled  = e->gi_enabled;
+    s.gi_samples  = e->gi_samples;
+    s.gi_strength = e->gi_strength;
     return s;
 }
 
@@ -257,13 +267,21 @@ void game_update(Game* e, float dt) {
     e->cam.setRotation(vec3(e->pitch, e->yaw, 0.0f));
 
     e->time += dt;
+
+    // Orbit the dynamic point light around the scene centre.
+    if (!e->point_lights.empty()) {
+        float a = e->time * e->point_light_speed;
+        e->point_lights[0].pos = vec3(std::cos(a) * e->point_light_radius,
+                                      e->point_light_height,
+                                      std::sin(a) * e->point_light_radius);
+    }
 }
 
 void game_render(Game* e, SDL_Texture* sdl_fb_texture, float dt) {
     uint64_t t = SDL_GetPerformanceCounter();
     double ms_core = 0;
 
-    e->fb.clear(0xFF000000);
+    e->fb.clear(e->skybox_enabled ? 0xFF000000 : pack(e->bg_color));
 
     // One dispatch point for every mode. The active backend (raster fallback or
     // CPU BVH / Embree / OpenCL ray tracer) renders the frame from a decoupled
@@ -312,7 +330,7 @@ void game_render(Game* e, SDL_Texture* sdl_fb_texture, float dt) {
                 "Accel: %s   Static: %s  Dyn: %s\n"
                 "Backend: %s\n"
                 "Move: %s\n"
-                "[TAB/G] backend [B] BVH [V] vis [N] normals\n[M] menu  [SPACE x2] walk/fly\n[H] compact\n",
+                "[TAB/G] backend [B] BVH [V] vis [N] normals [L] sun\n[M] menu  [SPACE x2] walk/fly\n[H] compact\n",
                 dt*1000.0f, 1.0f/dt, ms_core, ms_present,
                 e->static_bvh.triangle_count(), e->static_bvh.node_count(), e->static_build_ms,
                 e->dynamic_bvh.triangle_count(), e->dynamic_bvh.node_count(),
@@ -364,6 +382,7 @@ void game_handle_events(Game* e, SDL_Event& event, bool& running) {
             case SDLK_v:   e->show_bvh      = !e->show_bvh;      break;
             case SDLK_h:   e->hud_simple    = !e->hud_simple;    break;
             case SDLK_n:   e->show_normals  = !e->show_normals;  break;
+            case SDLK_l:   e->sun_enabled   = !e->sun_enabled;   break;
             case SDLK_g:   e->renderer.cycle(+1); break;
             default: break;
         }

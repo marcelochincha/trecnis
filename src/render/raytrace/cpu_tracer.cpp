@@ -1,6 +1,7 @@
 #include <render/raytrace/cpu_tracer.hpp>
 #include <render/raytrace/sr_raytrace.hpp>
 #include <algorithm>
+#include <cmath>
 
 void CpuTracer::start(int num_workers) {
     num_workers_ = std::clamp(num_workers, 1, MAX_WORKERS);
@@ -23,11 +24,15 @@ void CpuTracer::stop() {
     num_workers_ = 0;
 }
 
+void CpuTracer::dispatch() {
+    for (int i = 0; i < num_workers_; ++i) SDL_SemPost(start_[i]);
+    for (int i = 0; i < num_workers_; ++i) SDL_SemWait(done_);
+}
+
 void CpuTracer::render(const RenderScene& scene, framebuffer& fb) {
     job_scene_ = &scene;
     job_fb_    = &fb;
-    for (int i = 0; i < num_workers_; ++i) SDL_SemPost(start_[i]);
-    for (int i = 0; i < num_workers_; ++i) SDL_SemWait(done_);
+    dispatch();   // trace every stripe straight into the framebuffer
 }
 
 int CpuTracer::worker_entry(void* arg) {
@@ -42,24 +47,22 @@ int CpuTracer::worker_entry(void* arg) {
 }
 
 void CpuTracer::run_stripe(int id) {
+    int h       = job_fb_->height;
+    int stripe  = h / num_workers_;
+    int y0      = stripe * id;
+    int y1      = (id == num_workers_ - 1) ? h : stripe * (id + 1);
+    trace_stripe(y0, y1);
+}
+
+void CpuTracer::trace_stripe(int y0, int y1) {
     const RenderScene& s = *job_scene_;
     framebuffer&       fb = *job_fb_;
+    int w = fb.width, h = fb.height;
 
-    int stripe  = fb.height / num_workers_;
-    int y_start = stripe * id;
-    int y_end   = (id == num_workers_ - 1) ? fb.height : stripe * (id + 1);
-
-    int spp = s.spp;
-    for (int y = y_start; y < y_end; ++y)
-        for (int x = 0; x < fb.width; ++x) {
-            vec3 sum(0.0f, 0.0f, 0.0f);
-            for (int si = 0; si < spp; ++si) {
-                ray r(s.cam->_position, get_ray_direction(*s.cam, x, y, fb.width, fb.height));
-                uint32_t seed = ((uint32_t)(y * fb.width + x) * 2654435761u)
-                              ^ ((uint32_t)si * 805459861u);
-                sum = sum + trace_ray(r, s, 0, seed);
-            }
-            vec3 col = sum * (1.0f / spp);
-            fb.colorBuffer[y * fb.width + x] = pack(col) | 0xFF000000;
+    for (int y = y0; y < y1; ++y)
+        for (int x = 0; x < w; ++x) {
+            int idx = y * w + x;
+            ray r(s.cam->_position, get_ray_direction(*s.cam, x, y, w, h));
+            fb.colorBuffer[idx] = pack(trace_ray(r, s, 0)) | 0xFF000000;
         }
 }

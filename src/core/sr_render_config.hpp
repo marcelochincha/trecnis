@@ -12,5 +12,6 @@ struct renderConfig
     float lightInfluence = 1.0f; // How much the light affects the base color [0..1]
     bool ignoreDepth = false; // Whether to  NOT update and check depth buffer.
     bool ignoreLight = false; // Whether to ignore lighting calculations
+    bool backfaceCull = true; // Discard back-facing triangles (CCW = front)
 };
 
