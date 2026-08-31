@@ -96,12 +96,12 @@ void draw_normals_debug(Game* e) {
         draw_tri_vn(e->static_bvh.tri((int)i));
 }
 
-static const int MENU_ITEMS = 11;
+const int MENU_ITEMS = 9;
 
 static const char* menu_label(int i) {
     static const char* L[MENU_ITEMS] = {
-        "Render mode","Backend","Acceleration","Show BVH","Scene",
-        "Density","Reflections","Ray bounces","Static build","Dyn build","Samples"
+        "Render mode","Backend","Acceleration","Show BVH",
+        "Reflections","Ray bounces","Static build","Dyn build","Samples"
     };
     return L[i];
 }
@@ -112,13 +112,11 @@ static const char* menu_value(const Game* e, int i) {
         case 1: return e->renderer.current_name();
         case 2: return e->use_bvh       ? "BVH"        : "Brute force";
         case 3: return e->show_bvh      ? "On"         : "Off";
-        case 4: return e->scene_id==0 ? "City" : e->scene_id==1 ? "Spheres" : e->scene_id==2 ? "PBR Test" : e->scene_id==3 ? "Cornell Box" : "Character";
-        case 5: return e->density==0    ? "Small"      : (e->density==1 ? "Medium" : "Large");
-        case 6: return e->reflections   ? "On"         : "Off";
-        case 7: { static char b[8]; snprintf(b,sizeof(b),"%d",e->max_bounces); return b; }
-        case 8: return e->build_strategy==bvh::SAH    ? "SAH"
+        case 4: return e->reflections   ? "On"         : "Off";
+        case 5: { static char b[8]; snprintf(b,sizeof(b),"%d",e->max_bounces); return b; }
+        case 6: return e->build_strategy==bvh::SAH    ? "SAH"
                      : e->build_strategy==bvh::Median ? "Median" : "Morton";
-        case 9: return e->dynamic_build_strategy==bvh::SAH    ? "SAH"
+        case 7: return e->dynamic_build_strategy==bvh::SAH    ? "SAH"
                      : e->dynamic_build_strategy==bvh::Median ? "Median" : "Morton";
         default: { static char b[8]; snprintf(b,sizeof(b),"%d",e->spp); return b; }
     }
@@ -130,24 +128,22 @@ void menu_apply(Game* e, int dir) {
         case 1: e->renderer.cycle(dir); break;
         case 2: e->use_bvh       = !e->use_bvh;       break;
         case 3: e->show_bvh      = !e->show_bvh;      break;
-        case 4: e->scene_id = (e->scene_id+(dir<0?4:1))%5; rebuild_field(e); break;
-        case 5: e->density  = (e->density +(dir<0?2:1))%3; rebuild_field(e); break;
-        case 6: e->reflections = !e->reflections; break;
-        case 7: e->max_bounces = 1+((e->max_bounces-1+(dir<0?2:1))%3); break;
-        case 8: {
+        case 4: e->reflections = !e->reflections; break;
+        case 5: e->max_bounces = 1+((e->max_bounces-1+(dir<0?2:1))%3); break;
+        case 6: {
             int s = (int)e->build_strategy;
             s = (s+(dir<0?2:1))%3;
             e->build_strategy = (bvh::BuildStrategy)s;
             rebuild_field(e);
             break;
         }
-        case 9: {
+        case 7: {
             int s = (int)e->dynamic_build_strategy;
             s = (s+(dir<0?2:1))%3;
             e->dynamic_build_strategy = (bvh::BuildStrategy)s;
             break;
         }
-        case 10: {
+        case 8: {
             static const int spps[] = {1,2,4,8};
             int cur = 0;
             for (int i = 0; i < 4; ++i) if (spps[i] == e->spp) { cur = i; break; }

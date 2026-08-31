@@ -13,11 +13,6 @@
 
 using RTTri = bvh::Tri;
 
-#define ENABLE_FIELD 1
-#define FIELD_SLICES 10
-#define FIELD_STACKS 10
-#define CITY_SPAN    50.0f
-
 struct Game {
     framebuffer fb;
     camera cam;
@@ -34,14 +29,10 @@ struct Game {
 
     bool show_menu   = false;
     int  menu_cursor = 0;
-    int  scene_id    = 4;
-    int  density     = 1;
     bool reflections = true;
     int  max_bounces = 1;
     int  spp         = 1;  // samples per pixel
 
-    struct Ped { vec3 pos; vec3 skin; vec3 shirt; float phase; float speed; };
-    std::vector<Ped> peds;
     float  bob_phase    = 0.0f;
     bool   show_hud     = true;
     bool   hud_simple   = false;
@@ -66,21 +57,12 @@ struct Game {
     mesh*    field_mesh = nullptr;
     bvh::BVH static_bvh;
 
-    // ---- Character skinning + camera path animation (scene "Character") ----
-    // The skinned mesh lives in `meshes["character"]`, so build_scene_tris folds
-    // its (per-frame deformed) triangles into the DYNAMIC BVH every frame — that
-    // is the point: skinning + dynamic BVH rebuild coexist.
+    // Skinned character. The mesh lives in `meshes["character"]`, so
+    // build_scene_tris folds its per-frame deformed triangles into the DYNAMIC
+    // BVH every frame — skinning + dynamic BVH rebuild coexist.
     SkinnedMesh skin;
     mesh*       skin_mesh = nullptr;
-
-    struct CamKey { vec3 pos; vec3 euler_deg; }; // euler = (pitch, yaw, roll)
-    std::vector<CamKey> cam_keys;   // authored/generated path (the loop)
-    CamKey              cam_start{}; // pose the camera eased in from on play
-    std::string         cam_anim_music;
-    float cam_anim_fps  = 1.2f;     // keyframes advanced per second
-
-    float anim_time    = 0.0f;      // unified clock: drives mesh + camera
-    bool  anim_playing = false;     // toggled by [P] in the Character scene
+    float       anim_time = 0.0f;   // skinning clock (seconds)
 
     std::array<texture, 6> skybox_faces;
     bool skybox_enabled = true;

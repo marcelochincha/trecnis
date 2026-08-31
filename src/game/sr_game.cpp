@@ -41,59 +41,6 @@ static RenderScene make_render_scene(Game* e) {
     return s;
 }
 
-static const int kSceneCharacter = 4;
-
-// Samples the camera path at the current anim clock. First keyframe unit eases
-// in from the pose the player had when they hit play (e->cam_start); after that
-// it loops around the authored/generated keys.
-static void anim_sample_camera(const Game* e, vec3& outPos, vec3& outEulerDeg) {
-    const auto& K = e->cam_keys;
-    if (K.empty()) {
-        outPos = e->position;
-        outEulerDeg = vec3(to_degrees(e->pitch), to_degrees(e->yaw), 0.0f);
-        return;
-    }
-    float u = e->anim_time * e->cam_anim_fps; // in keyframe units
-    int   n = (int)K.size();
-    Game::CamKey a, b; float local;
-    if (u < 1.0f) { a = e->cam_start; b = K[0]; local = u; }
-    else {
-        float uu = u - 1.0f;
-        int seg = (int)std::floor(uu);
-        if (seg >= n - 1) {           // reached the end: hold the last keyframe
-            outPos = K[n - 1].pos;
-            outEulerDeg = K[n - 1].euler_deg;
-            return;
-        }
-        local = uu - std::floor(uu);
-        a = K[seg]; b = K[seg + 1];
-    }
-    float s = local * local * (3.0f - 2.0f * local); // smoothstep ease
-    outPos = lerp(a.pos, b.pos, s);
-    auto alerp = [&](float x, float y) {            // wrap-aware angle lerp (deg)
-        float d = y - x;
-        while (d >  180.0f) d -= 360.0f;
-        while (d < -180.0f) d += 360.0f;
-        return x + d * s;
-    };
-    outEulerDeg = vec3(alerp(a.euler_deg.x, b.euler_deg.x),
-                       alerp(a.euler_deg.y, b.euler_deg.y),
-                       alerp(a.euler_deg.z, b.euler_deg.z));
-}
-
-// [P] in the Character scene: start/stop the mesh + camera animation together.
-static void toggle_character_anim(Game* e) {
-    if (e->scene_id != kSceneCharacter) return;
-    e->anim_playing = !e->anim_playing;
-    if (e->anim_playing) {
-        e->anim_time = 0.0f;
-        e->cam_start = { e->position, vec3(to_degrees(e->pitch), to_degrees(e->yaw), 0.0f) };
-        if (!e->cam_anim_music.empty()) sound_play_music(e->cam_anim_music.c_str(), false);
-    } else {
-        if (!e->cam_anim_music.empty()) sound_stop_music();
-    }
-}
-
 Game* game_create(int width, int height) {
     return new Game(width, height);
 }
@@ -112,9 +59,7 @@ void game_init(Game* e) {
     load_png_texture("res/textures/skybox3/null_plainsky512_dn.png", e->skybox_faces[5]);
 
 
-    #if ENABLE_FIELD
-        rebuild_field(e);
-    #endif
+    rebuild_field(e);
     build_scene_tris(e);
 
     // Resolve the worker count from --threads: -1 (or 0) = all hardware threads.
@@ -129,40 +74,12 @@ void game_init(Game* e) {
 void game_update(Game* e, float dt) {
     if (e->show_menu) return;
 
-    // Character scene: while the animation is playing, the camera path and the
-    // skinned mesh are driven together and player look/move is suspended.
-    if (e->scene_id == kSceneCharacter && e->anim_playing) {
+    // Advance the character skinning; its deformed mesh feeds the dynamic BVH.
+    if (e->skin_mesh && e->skin.valid()) {
         e->anim_time += dt;
-        e->time      += dt;
-
-        // One-shot: play once then stop, holding the last pose — no auto-restart.
-        // Both clips run in real time off this clock; the run ends when the LONGER
-        // of the two (camera vs mesh, each frames/fps seconds) is done, so neither
-        // gets cut short. apply()/anim_sample_camera clamp to their own last frame.
-        float cam_dur  = e->cam_keys.empty() ? 0.0f
-                       : (float)e->cam_keys.size() / e->cam_anim_fps;
-        float mesh_dur = e->skin.valid() ? (float)e->skin.frames / e->skin.fps : 0.0f;
-        float total    = std::max(cam_dur, mesh_dur);
-        bool finished  = (total > 0.0f && e->anim_time >= total);
-        if (finished) e->anim_time = total;
-
-        if (e->skin_mesh && e->skin.valid())
-            e->skin.apply(*e->skin_mesh, e->anim_time);
-
-        vec3 p, eul;
-        anim_sample_camera(e, p, eul);
-        e->position = p;
-        e->pitch    = to_radians(eul.x);
-        e->yaw      = to_radians(eul.y);
-        e->cam.setPosition(p);
-        e->cam.setRotation(vec3(e->pitch, e->yaw, to_radians(eul.z)));
-        SDL_GetRelativeMouseState(nullptr, nullptr); // drain mouse delta
-
-        if (finished) {
-            e->anim_playing = false;
-            if (!e->cam_anim_music.empty()) sound_stop_music();
-        }
-        return;
+        float loop = (float)e->skin.frames / e->skin.fps;   // loop the clip
+        if (loop > 0.0f && e->anim_time > loop) e->anim_time -= loop;
+        e->skin.apply(*e->skin_mesh, e->anim_time);
     }
 
     const Uint8* keys = SDL_GetKeyboardState(NULL);
@@ -202,13 +119,6 @@ void game_update(Game* e, float dt) {
     e->cam.setRotation(vec3(e->pitch, e->yaw, 0.0f));
 
     e->time += dt;
-    const float lim = CITY_SPAN * 0.5f - 1.0f;
-    for (auto& p : e->peds) {
-        p.pos.z -= p.speed * dt;
-        p.phase += std::fabs(p.speed) * dt * 4.0f;
-        if      (p.pos.z < -lim) p.pos.z =  lim;
-        else if (p.pos.z >  lim) p.pos.z = -lim;
-    }
 }
 
 void game_render(Game* e, SDL_Texture* sdl_fb_texture, float dt) {
@@ -330,8 +240,8 @@ void game_handle_events(Game* e, SDL_Event& event, bool& running) {
     }
     if (e->show_menu && event.type == SDL_KEYDOWN) {
         SDL_Keycode k = event.key.keysym.sym;
-        if      (k == SDLK_UP)                  { e->menu_cursor = (e->menu_cursor-1+11)%11; }
-        else if (k == SDLK_DOWN)                 { e->menu_cursor = (e->menu_cursor+1)%11;   }
+        if      (k == SDLK_UP)                  { e->menu_cursor = (e->menu_cursor-1+MENU_ITEMS)%MENU_ITEMS; }
+        else if (k == SDLK_DOWN)                 { e->menu_cursor = (e->menu_cursor+1)%MENU_ITEMS;   }
         else if (k == SDLK_LEFT)                 { menu_apply(e, -1); }
         else if (k == SDLK_RIGHT || k==SDLK_RETURN) { menu_apply(e, +1); }
         return;
@@ -344,7 +254,6 @@ void game_handle_events(Game* e, SDL_Event& event, bool& running) {
             case SDLK_h:   e->hud_simple    = !e->hud_simple;    break;
             case SDLK_n:   e->show_normals  = !e->show_normals;  break;
             case SDLK_g:   e->renderer.cycle(+1); break;
-            case SDLK_p:   toggle_character_anim(e); break;
             default: break;
         }
     }
