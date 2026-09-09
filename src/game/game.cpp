@@ -171,11 +171,13 @@ void game_init(Game* e) {
     load_png_texture("res/textures/skybox3/null_plainsky512_dn.png", e->skybox_faces[5]);
 
     // --- ball + arena ---
-    e->ball.radius = 0.5f;
-    e->ball.pos    = vec3(-1.5f, 2.2f, 0.0f);
-    e->ball.vel    = vec3(3.4f, 2.6f, 1.7f);     // constant speed ~ 4.7 u/s
-    e->arena.min   = vec3(-4.0f, 0.0f, -3.5f);
-    e->arena.max   = vec3( 4.0f, 6.0f,  3.5f);
+    e->ball.radius      = 0.5f;
+    e->ball.gravity     = 9.81f;
+    e->ball.restitution = 0.75f;                 // normal KE -> e^2 = 0.56 per bounce
+    e->ball.pos         = vec3(-3.0f, 5.2f, 0.4f);
+    e->ball.vel         = vec3(3.0f, 0.5f, -0.7f);
+    e->arena.min        = vec3(-4.0f, 0.0f, -3.5f);
+    e->arena.max        = vec3( 4.0f, 6.0f,  3.5f);
 
     // --- sphere geometry: generate ONCE, centred at origin ---
     e->sphere_local_.clear();
@@ -210,12 +212,11 @@ void game_init(Game* e) {
 }
 
 void game_update(Game* e, float dt) {
-    // Guard against a huge first/hitching dt so a slow frame cannot fling the
-    // ball across the arena (frame-rate independence, not a physics sub-step).
-    float step = std::min(dt, 1.0f / 20.0f);
-
+    // Ball::update consumes the real dt with an internal fixed physics sub-step,
+    // so the trajectory is frame-rate independent (and it clamps a hitching dt
+    // itself — no spiral of death).
     uint64_t tp = SDL_GetPerformanceCounter();
-    e->wall_hits_total += e->ball.update(step, e->arena);
+    e->bounces_total += e->ball.update(dt, e->arena);
     refresh_sphere_world(e, e->ball.pos);          // in-place, no allocation
     e->sphere_mesh_.setPosition(e->ball.pos);      // raster mirror follows
     e->metrics.physics_ms = Metrics::ema(e->metrics.physics_ms, ms_since(tp));
@@ -249,10 +250,10 @@ void game_render(Game* e, SDL_Texture* sdl_fb_texture, float dt) {
     if (global_config.debug_mode && elapsed >= next_log) {
         next_log += 2.0;
         std::printf("[perf] t=%5.1fs | fps %3.0f | frame %5.2f ms | physics %.3f | dynBVH %.3f | render %5.2f "
-                    "| tris %zu | rays %zu | ball(%.2f,%.2f,%.2f) hits %d\n",
+                    "| tris %zu | rays %zu | ball(%.2f,%.2f,%.2f) |v|=%.2f bounces %d\n",
                     elapsed, fps, m.frame_ms, m.physics_ms, m.dyn_build_ms, m.render_ms,
                     tris, m.primary_rays,
-                    e->ball.pos.x, e->ball.pos.y, e->ball.pos.z, e->wall_hits_total);
+                    e->ball.pos.x, e->ball.pos.y, e->ball.pos.z, e->ball.speed(), e->bounces_total);
         std::fflush(stdout);
     }
 
@@ -260,14 +261,15 @@ void game_render(Game* e, SDL_Texture* sdl_fb_texture, float dt) {
 
         char hud[640];
         std::snprintf(hud, sizeof(hud),
-            "PingPong RT  -  dynamic ray-tracing checkpoint\n"
+            "PingPong RT  -  ball physics: gravity + restitution\n"
             "Backend : %s%s   (TAB / G to cycle)\n"
             "FPS     : %.0f      Frame : %.2f ms\n"
             "Physics : %.3f ms   Dyn BVH build : %.3f ms\n"
             "Render  : %.2f ms   (traversal + shading)\n"
             "Tris    : %zu static + %zu dynamic = %zu\n"
             "Rays    : %zu primary / frame\n"
-            "Ball    : p(%.1f, %.1f, %.1f)  wall hits: %d\n"
+            "Ball    : p(%.1f, %.1f, %.1f)  speed %.2f  bounces: %d\n"
+            "Physics : g %.2f   e %.2f  (sub-step 1/240 s)\n"
             "[ESC] quit",
             e->renderer.current_name(),
             e->renderer.current_available() ? "" : " (n/a)",
@@ -276,7 +278,8 @@ void game_render(Game* e, SDL_Texture* sdl_fb_texture, float dt) {
             m.render_ms,
             e->static_bvh.triangle_count(), e->dynamic_bvh.triangle_count(), tris,
             m.primary_rays,
-            e->ball.pos.x, e->ball.pos.y, e->ball.pos.z, e->wall_hits_total);
+            e->ball.pos.x, e->ball.pos.y, e->ball.pos.z, e->ball.speed(), e->bounces_total,
+            e->ball.gravity, e->ball.restitution);
 
         draw_text(e->fb, 11, 11, hud, 0xAA000000, 0xAA000000);
         draw_text(e->fb, 10, 10, hud, 0xFFFFFFFF);

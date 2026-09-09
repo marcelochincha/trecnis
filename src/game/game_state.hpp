@@ -2,8 +2,9 @@
 // Internal header — included only by game/ sub-modules, never by render/.
 //
 // Checkpoint scene: a static box arena (floor + 3 walls) in the STATIC BVH and
-// one ray-traced sphere in the DYNAMIC BVH, moving with delta time and bouncing
-// off the arena. No player, racket, score, AI, menu, gravity, spin.
+// one ray-traced sphere in the DYNAMIC BVH. The ball falls under gravity and
+// bounces off the arena with a restitution coefficient (energy loss per bounce),
+// integrated frame-rate independently. No player, racket, spin, Magnus, score.
 
 #include <SDL2/SDL.h>
 #include <vector>
@@ -67,7 +68,7 @@ struct Game {
     // --- physics state -----------------------------------------------------
     Ball ball;
     AABB arena;                                 // ball centre stays inside this
-    int  wall_hits_total = 0;
+    int  bounces_total = 0;
 
     // --- per-frame draw list for the raster backend ----------------------
     std::vector<RasterItem> raster_items;

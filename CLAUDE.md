@@ -22,6 +22,9 @@ Initial MVP:
 
 Do NOT implement a second opponent yet.
 
+The MVP is the final target of the initial development stage.
+Implement it incrementally through checkpoints.
+
 ## Architecture
 
 Game logic must remain independent from rendering.
@@ -72,7 +75,67 @@ Read only the document relevant to the current task.
 
 ## Current development phase
 
-Phase 0: project migration and renderer validation.
 
-Do not implement advanced physics, spin, AI, scoring or complex animation
-until the MVP architecture is working.
+Phase 1: dynamic ball prototype.
+
+The renderer migration and initial renderer validation are complete.
+
+Current checkpoint:
+- Dynamic 3D ball
+- Delta-time movement
+- Arena collision and rebound
+- Dynamic BVH
+- CPU / OpenCL / Raster rendering
+
+Do not repeat the migration or renderer audit unless explicitly requested.
+
+
+## Execution limits
+
+Do not enter prolonged trial-and-error loops.
+
+If a build, test, runtime execution, or validation fails:
+1. Diagnose the failure.
+2. Attempt at most 2 reasonable fixes.
+3. If it still fails, stop and report the failure.
+4. Do not make speculative changes.
+5. Do not run prolonged benchmarks or repeated validation unless explicitly requested.
+
+Never spend extended time trying to force a test to pass. A clear failure report is preferable to uncontrolled changes.
+
+
+## Checkpoint discipline
+
+Each checkpoint must follow:
+
+Implement
+→ Build
+→ Short functional test
+→ Validate
+→ Commit
+→ Stop
+
+If validation fails:
+
+Implement
+→ Build
+→ Test
+→ Diagnose
+→ Max 2 reasonable fixes
+→ Stop if unresolved
+
+## Renderer protection
+
+The existing renderer and BVH are considered stable infrastructure.
+
+Do not modify:
+- src/render/**
+- bvh.*
+- core renderer infrastructure
+
+unless the current task explicitly requires it.
+
+If a problem appears to originate in the existing renderer:
+1. Diagnose it.
+2. Report the suspected cause.
+3. Do not rewrite or refactor the renderer as a speculative fix.
