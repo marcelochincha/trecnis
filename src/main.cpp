@@ -22,10 +22,15 @@ SDL_Texture  *sdl_fb_texture;
 void init_sdl()
 {
     SDL_Init(SDL_INIT_VIDEO);
+    // The window is a magnified view of the framebuffer, not a bigger one: it
+    // opens at scale x the render size, while the logical size below keeps the
+    // renderer drawing exactly window_width x window_height pixels. Integer
+    // scaling (already set) then blows those up without resampling artefacts.
     window = SDL_CreateWindow(
         "sr_lec",
         SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-        global_config.window_width, global_config.window_height,
+        global_config.window_width  * global_config.window_scale,
+        global_config.window_height * global_config.window_scale,
         SDL_WINDOW_RESIZABLE);
     renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
     SDL_RenderSetLogicalSize(renderer, global_config.window_width, global_config.window_height);

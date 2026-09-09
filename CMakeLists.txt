@@ -50,18 +50,42 @@ if(NOT TARGET SDL2::SDL2)
     endif()
 endif()
 
-# ---- SDL2_mixer (bundled: third_party/SDL2/ + lib/) -------------------------
-set(SDL2_MIXER_LIB "${CMAKE_SOURCE_DIR}/lib/libSDL2_mixer.dll.a")
+# ---- SDL2_mixer -------------------------------------------------------------
+# Windows: the bundled import lib in lib/ (+ headers in third_party/SDL2/).
+# macOS/Unix: a system install (Homebrew: brew install sdl2_mixer).
+# src/sound/sr_sound.hpp includes <SDL2/SDL_mixer.h> unconditionally, so this
+# is a hard requirement on every platform - there is no "without audio" build.
+if(WIN32)
+    set(SDL2_MIXER_LIB "${CMAKE_SOURCE_DIR}/lib/libSDL2_mixer.dll.a")
 
-if(EXISTS "${SDL2_MIXER_LIB}")
-    message(STATUS "SDL2_mixer (bundled): ${SDL2_MIXER_LIB}")
-    add_library(SDL2_mixer::SDL2_mixer IMPORTED STATIC GLOBAL)
-    set_target_properties(SDL2_mixer::SDL2_mixer PROPERTIES
-        IMPORTED_LOCATION "${SDL2_MIXER_LIB}"
-        INTERFACE_INCLUDE_DIRECTORIES "${CMAKE_SOURCE_DIR}/third_party/SDL2"
-        INTERFACE_LINK_LIBRARIES SDL2::SDL2)
+    if(EXISTS "${SDL2_MIXER_LIB}")
+        message(STATUS "SDL2_mixer (bundled): ${SDL2_MIXER_LIB}")
+        add_library(SDL2_mixer::SDL2_mixer IMPORTED STATIC GLOBAL)
+        set_target_properties(SDL2_mixer::SDL2_mixer PROPERTIES
+            IMPORTED_LOCATION "${SDL2_MIXER_LIB}"
+            INTERFACE_INCLUDE_DIRECTORIES "${CMAKE_SOURCE_DIR}/third_party/SDL2"
+            INTERFACE_LINK_LIBRARIES SDL2::SDL2)
+    else()
+        message(FATAL_ERROR
+            "SDL2_mixer not found: expected ${SDL2_MIXER_LIB}\n"
+            "Place the bundled SDL2_mixer import lib in lib/.")
+    endif()
 else()
-    message(STATUS "SDL2_mixer not found in lib/ -> building without audio")
+    find_path(SDL2_MIXER_INCLUDE_DIR SDL2/SDL_mixer.h)
+    find_library(SDL2_MIXER_SYS_LIB NAMES SDL2_mixer)
+
+    if(SDL2_MIXER_INCLUDE_DIR AND SDL2_MIXER_SYS_LIB)
+        message(STATUS "SDL2_mixer (system): ${SDL2_MIXER_SYS_LIB}")
+        add_library(SDL2_mixer::SDL2_mixer IMPORTED UNKNOWN GLOBAL)
+        set_target_properties(SDL2_mixer::SDL2_mixer PROPERTIES
+            IMPORTED_LOCATION "${SDL2_MIXER_SYS_LIB}"
+            INTERFACE_INCLUDE_DIRECTORIES "${SDL2_MIXER_INCLUDE_DIR}"
+            INTERFACE_LINK_LIBRARIES SDL2::SDL2)
+    else()
+        message(FATAL_ERROR
+            "SDL2_mixer not found on the system.\n"
+            "macOS: brew install sdl2_mixer")
+    endif()
 endif()
 
 # ---- Sources: every .cpp under src/, recursively ----------------------------

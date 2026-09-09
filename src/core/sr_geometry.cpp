@@ -226,8 +226,9 @@ void create_sphere(mesh*m, float radius, int segments_lat, int segments_lon)
             uint32_t a = lat * (segments_lon + 1) + lon;
             uint32_t b = a + segments_lon + 1;
 
-            m->faces.push_back({a, b, a + 1});
-            m->faces.push_back({a + 1, b, b + 1});
+            // CCW seen from outside, per the project's winding convention.
+            m->faces.push_back({a, a + 1, b});
+            m->faces.push_back({a + 1, b + 1, b});
         }
     }
 }

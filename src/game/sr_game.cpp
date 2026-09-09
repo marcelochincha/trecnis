@@ -2,9 +2,11 @@
 #include <game/sr_game_state.hpp>
 #include <render/raytrace/sr_raytrace.hpp>
 #include <game/sr_hud.hpp>
+#include <game/ball_physics.hpp>
 
 #include <render/raytrace/sr_ocl.hpp>
 #include <engine/anim/skinned_mesh.hpp>
+#include <engine/assets/obj_loader.hpp>
 #include <sound/sr_sound.hpp>
 #include <sr_config.hpp>
 #include <algorithm>
@@ -93,11 +95,73 @@ static void fold_mesh(std::vector<bvh::Tri>& out, const mesh& m,
     }
 }
 
-// Rebuild the DYNAMIC BVH from the (skinned) character. Called every frame.
+// Rebuild the DYNAMIC BVH from the (skinned) character and the ball. Called
+// every frame.
 static void build_dynamic(Game* e) {
     e->rt_tris.clear();
     if (e->character) fold_mesh(e->rt_tris, *e->character, e->char_albedo, e->char_rough);
+    if (e->ball_mesh) {
+        e->ball_mesh->setPosition(e->ball_pos);
+        fold_mesh(e->rt_tris, *e->ball_mesh, e->ball_albedo, 0.25f);
+    }
     e->dynamic_bvh.build(e->rt_tris, e->dynamic_build_strategy);
+}
+
+// The spin the serve is struck with. The ball travels along -Z, so topspin is a
+// rotation about -X (the top of the ball moving the way the ball moves) and the
+// sidespins are about +/-Y. See ballphys::compute_acceleration for what each one
+// then does to the flight.
+static vec3 serve_spin(int sel) {
+    const float w = 300.0f;   // rad/s: a firm but not maximal stroke
+    switch (sel) {
+        case 1:  return vec3(-w, 0.0f, 0.0f);   // top
+        case 2:  return vec3( w, 0.0f, 0.0f);   // back
+        case 3:  return vec3(0.0f,  w, 0.0f);   // left
+        case 4:  return vec3(0.0f, -w, 0.0f);   // right
+        case 0:
+        default: return vec3(0.0f, 0.0f, 0.0f); // none
+    }
+}
+
+static const char* spin_name(int sel) {
+    switch (sel) {
+        case 1:  return "top";
+        case 2:  return "back";
+        case 3:  return "left";
+        case 4:  return "right";
+        default: return "none";
+    }
+}
+
+// Strike the ball. This is the ONLY place the trajectory is computed: one burst
+// at the moment of the hit, then a post-pass that bends it toward the aim target
+// without touching the physics. Everything afterwards just reads the store.
+static void serve_ball(Game* e) {
+    // Launch from a fixed point tuned to land in the far court (independent of
+    // wherever the character model is placed for looks — the velocity/spin
+    // below were tuned against this exact origin, so it doesn't follow the
+    // character around).
+    const vec3 server = vec3(e->table.half_width + 0.34f, 0.0f, e->table.half_len - 0.12f);
+    ballphys::BallState b;
+    b.pos  = vec3(server.x - 0.25f, e->table.height + 0.30f, server.z - 0.05f);
+    b.vel  = vec3(-1.7f, 1.5f, -4.5f);   // swept across so every spin lands in
+    b.spin = serve_spin(e->ball_spin_sel);
+
+    ballphys::process_hit(b, e->table, e->ball_pred, +1.0f);
+
+    if (e->ball_autoaim) {
+        ballphys::apply_autoaim(e->ball_pred, e->ball_target,
+                                ballphys::fudge_for(ballphys::Stroke::Normal), 1.0f / 60.0f);
+    }
+
+    e->ball_clock  = 0.0f;
+    e->ball_active = e->ball_pred.queue.count() > 1;
+    e->ball_pos    = b.pos;
+
+    std::cout << "serve: spin=" << spin_name(e->ball_spin_sel)
+              << "  outcome=" << ballphys::outcome_name(e->ball_pred.outcome)
+              << " at t=" << e->ball_pred.outcome_time << "s"
+              << "  samples=" << e->ball_pred.queue.count() << "\n";
 }
 
 // Build the static scene (floor + light) into the static BVH, mirror it for the
@@ -108,6 +172,35 @@ void game_rebuild_static(Game* e) {
     std::vector<bvh::Tri> tris;
     add_box(tris, vec3(-8.f, -0.02f, -8.f), vec3(8.f, 0.f, 8.f), e->floor_albedo, 0.01f);
     //add_emissive_quad(tris, vec3(0.0f, 5.0f, 0.0f), 2.0f, 2.0f, vec3(6.f, 6.f, 6.f));
+
+    // Regulation table, sized from the same numbers the ball physics uses so the
+    // geometry and the simulation can never drift apart: 2.74 x 1.525 m, surface
+    // 76 cm up, a 15.25 cm net on the z = 0 plane.
+    const ballphys::Table& tb = e->table;
+    const vec3 top_albedo(0.06f, 0.20f, 0.35f);
+    add_box(tris, vec3(-tb.half_width, tb.height - 0.02f, -tb.half_len),
+                  vec3( tb.half_width, tb.height,          tb.half_len), top_albedo, 0.35f);
+    // White edge lines, laid just proud of the surface.
+    const vec3 line(0.90f, 0.90f, 0.92f);
+    const float lw = 0.02f, eps = 0.001f;
+    add_box(tris, vec3(-tb.half_width, tb.height, -tb.half_len),
+                  vec3(-tb.half_width + lw, tb.height + eps, tb.half_len), line, 0.35f);
+    add_box(tris, vec3( tb.half_width - lw, tb.height, -tb.half_len),
+                  vec3( tb.half_width, tb.height + eps, tb.half_len), line, 0.35f);
+    // Net.
+    add_box(tris, vec3(-tb.half_width, tb.height, -0.006f),
+                  vec3( tb.half_width, tb.height + tb.net_height, 0.006f),
+                  vec3(0.85f, 0.85f, 0.88f), 0.8f);
+    // Four legs, so the table is not floating.
+    for (int sx = -1; sx <= 1; sx += 2) {
+        for (int sz = -1; sz <= 1; sz += 2) {
+            float cx = sx * (tb.half_width - 0.10f);
+            float cz = sz * (tb.half_len   - 0.15f);
+            add_box(tris, vec3(cx - 0.03f, 0.0f, cz - 0.03f),
+                          vec3(cx + 0.03f, tb.height - 0.02f, cz + 0.03f),
+                          vec3(0.15f, 0.15f, 0.17f), 0.5f);
+        }
+    }
 
     delete e->field_mesh;
     e->field_mesh = make_raster_mesh(tris);
@@ -125,12 +218,36 @@ void game_rebuild_static(Game* e) {
     e->renderer.reload_scene(e->static_bvh, e->skybox_faces, e->emissive_tris);
 }
 
-// One-time scene construction: static geometry + the procedural character.
+// One-time scene construction: static geometry + the player character.
 static void init_scene(Game* e) {
     e->skin = SkinnedMesh{};
     mesh* cm = new mesh;
-    build_procedural_character(*cm, e->skin);
-    cm->setPosition(vec3(0.0f, 0.0f, 0.0f));
+    bool loaded = load_obj_mesh("res/man_slim/man.obj", *cm);
+    if (!loaded) {
+        std::cout << "init_scene: could not load res/man_slim/man.obj, falling back "
+                     "to the procedural character\n";
+        build_procedural_character(*cm, e->skin);
+        e->char_base_pos = vec3(e->table.half_width + 0.34f, 0.0f, e->table.half_len - 0.12f);
+        e->char_base_yaw = 0.0f;
+    } else {
+        // Slim CC0 model (Quaternius "Man"), baked from its "Idle" pose (arms
+        // down) rather than the rest T-pose — see res/man_slim/man.obj header
+        // and the bake script. No skinning at runtime: the pose is static, and
+        // a flat per-body-part palette texture stands in for its untextured
+        // materials (res/man_slim/man_palette.png). Raw bbox: height 4.812,
+        // feet at y ~-0.004; scaled to ~1.575 m (a ~1.75 m adult, sized down
+        // 10%, proportions unchanged since the scale is uniform).
+        const float kRawHeight = 4.812f;
+        const float kRawFeetY  = -0.004f;
+        float charScale = (1.75f * 0.9f) / kRawHeight;
+        cm->setScale(vec3(charScale, charScale, charScale));
+        // Centered on one short end of the table (serving position), standing
+        // just behind the end line, facing down the table toward the net.
+        // serve_ball() reads this position, so it's also where the ball launches.
+        e->char_base_pos = vec3(0.0f, -kRawFeetY * charScale, e->table.half_len + 0.35f);
+        e->char_base_yaw = 3.14159265f; // model faces +Z (the camera) at yaw 0; flip to face the table
+    }
+    cm->setPosition(e->char_base_pos);
     if (e->skin.valid()) e->skin.apply(*cm, 0.0f);
     delete e->character;
     e->character = cm;
@@ -141,11 +258,17 @@ static void init_scene(Game* e) {
     e->point_lights.push_back(PointLight{ vec3(e->point_light_radius, e->point_light_height, 0.0f),
                                           vec3(1.0f, 0.9f, 0.75f), 12.0f });
 
+    // The ball: a real 40 mm sphere, folded into the dynamic BVH each frame.
+    delete e->ball_mesh;
+    e->ball_mesh = new mesh;
+    create_sphere(e->ball_mesh, ballphys::kBallRadius, 10, 14);
+
     game_rebuild_static(e);
-    set_start_view(e, vec3(0.0f, 1.6f, 6.0f), vec3(0.0f, 1.2f, 0.0f));
-    std::cout << "Scene: " << e->static_bvh.triangle_count()
-              << " static tris, procedural character ("
-              << e->skin.bones << " bones, " << e->skin.frames << " frames)\n";
+    serve_ball(e);
+    set_start_view(e, vec3(0.0f, 1.45f, 3.30f), vec3(0.0f, 0.90f, -0.40f));
+    std::cout << "Scene: " << e->static_bvh.triangle_count() << " static tris, "
+              << e->character->faces.size() << " character tris"
+              << (e->skin.valid() ? " (skinned)" : " (static, idle sway only)") << "\n";
 }
 
 // Fill the per-frame render view the backends consume. This is the seam between
@@ -167,8 +290,9 @@ static RenderScene make_render_scene(Game* e) {
 
     // Raster draw list: static scenery (no shadow) + the character (casts one).
     e->raster_items.clear();
-    if (e->field_mesh) e->raster_items.push_back({ e->field_mesh, pack(e->floor_albedo), false });
-    if (e->character)  e->raster_items.push_back({ e->character,  pack(e->char_albedo),  true  });
+    if (e->field_mesh)  e->raster_items.push_back({ e->field_mesh,  pack(e->floor_albedo),   false });
+    if (e->character)   e->raster_items.push_back({ e->character,  pack(e->char_albedo),    true  });
+    if (e->ball_mesh)   e->raster_items.push_back({ e->ball_mesh,   pack(e->ball_albedo),    true  });
     s.raster_items = &e->raster_items;
 
     s.emissive        = e->emissive_enabled ? &e->emissive_tris : nullptr;
@@ -219,15 +343,42 @@ void game_init(Game* e) {
 void game_update(Game* e, float dt) {
     if (e->show_menu) return;
 
-    // Advance the character skinning, then re-fold it into the dynamic BVH. This
-    // happens every frame regardless of backend, so the raster draw and the ray
-    // tracers all see the same deformed geometry — no per-mode special cases.
-    if (e->character && e->skin.valid()) {
+    // Advance the character, then re-fold it into the dynamic BVH. This happens
+    // every frame regardless of backend, so the raster draw and the ray tracers
+    // all see the same geometry — no per-mode special cases.
+    if (e->character) {
         e->anim_time += dt;
-        float loop = (float)e->skin.frames / e->skin.fps;   // loop the clip
-        if (loop > 0.0f && e->anim_time > loop) e->anim_time -= loop;
-        e->skin.apply(*e->character, e->anim_time);
+        if (e->skin.valid()) {
+            float loop = (float)e->skin.frames / e->skin.fps;   // loop the clip
+            if (loop > 0.0f && e->anim_time > loop) e->anim_time -= loop;
+            e->skin.apply(*e->character, e->anim_time);
+        } else {
+            // No rig on this model: a small hand-authored sway + bob on the
+            // whole-body transform stands in for "minimal" idle motion,
+            // layered on top of the fixed placement from init_scene.
+            float sway = std::sin(e->anim_time * 1.3f) * to_radians(2.5f);
+            float bob  = std::sin(e->anim_time * 2.6f) * 0.010f;
+            e->character->setRotation(vec3(0.0f, e->char_base_yaw + sway, 0.0f));
+            e->character->setPosition(e->char_base_pos + vec3(0.0f, bob, 0.0f));
+        }
     }
+    // Ball playback. No integration here: the flight was solved at the hit, so
+    // this only reads the store by time and retires what the clock has passed.
+    if (e->ball_active) {
+        e->ball_clock += dt;
+        ballphys::BallState st;
+        if (e->ball_pred.queue.sample_at(e->ball_clock, st)) {
+            e->ball_pos = st.pos;
+            e->ball_pred.queue.pop_expired(e->ball_clock);
+        } else {
+            e->ball_active  = false;      // ran past the end of the prediction
+            e->ball_respawn = 1.0f;
+        }
+    } else {
+        e->ball_respawn -= dt;
+        if (e->ball_respawn <= 0.0f) serve_ball(e);
+    }
+
     build_dynamic(e);
 
     const Uint8* keys = SDL_GetKeyboardState(NULL);
@@ -318,7 +469,7 @@ void game_render(Game* e, SDL_Texture* sdl_fb_texture, float dt) {
             draw_text(e->fb, 12, 12, line, 0x88000000, 0x88000000);
             draw_text(e->fb, 10, 10, line, 0xFFFFFFFF);
         } else {
-            char HUD[640] = {0};
+            char HUD[1024] = {0};
             snprintf(HUD, sizeof(HUD),
                 "=== SR-LEC ===\n"
                 "Frametime: %.2fms   FPS: %.2f\n"
@@ -330,14 +481,21 @@ void game_render(Game* e, SDL_Texture* sdl_fb_texture, float dt) {
                 "Accel: %s   Static: %s  Dyn: %s\n"
                 "Backend: %s\n"
                 "Move: %s\n"
-                "[TAB/G] backend [B] BVH [V] vis [N] normals [L] sun\n[M] menu  [SPACE x2] walk/fly\n[H] compact\n",
+                "--- Ball ---\n"
+                "  spin: %-5s  autoaim: %-3s  outcome: %s\n"
+                "  t: %.2f / %.2fs   samples left: %d\n"
+                "[TAB/G] backend [B] BVH [V] vis [N] normals [L] sun\n[M] menu  [SPACE x2] walk/fly\n"
+                "[P] serve  [O] spin  [K] autoaim  [H] compact\n",
                 dt*1000.0f, 1.0f/dt, ms_core, ms_present,
                 e->static_bvh.triangle_count(), e->static_bvh.node_count(), e->static_build_ms,
                 e->dynamic_bvh.triangle_count(), e->dynamic_bvh.node_count(),
                 e->use_bvh ? "BVH (fast)" : "BRUTE FORCE (slow)",
                 e->build_strategy==bvh::SAH ? "SAH" : e->build_strategy==bvh::Median ? "Median" : "Morton",
                 e->dynamic_build_strategy==bvh::SAH ? "SAH" : e->dynamic_build_strategy==bvh::Median ? "Median" : "Morton",
-                backend, e->fly_mode ? "FLY" : "WALK");
+                backend, e->fly_mode ? "FLY" : "WALK",
+                spin_name(e->ball_spin_sel), e->ball_autoaim ? "on" : "off",
+                ballphys::outcome_name(e->ball_pred.outcome),
+                e->ball_clock, e->ball_pred.queue.max_t(), e->ball_pred.queue.count());
             draw_text(e->fb, 22, 22, HUD, 0x88000000, 0x88000000);
             draw_text(e->fb, 20, 20, HUD, 0xFFFFFFFF);
         }
@@ -383,6 +541,9 @@ void game_handle_events(Game* e, SDL_Event& event, bool& running) {
             case SDLK_h:   e->hud_simple    = !e->hud_simple;    break;
             case SDLK_n:   e->show_normals  = !e->show_normals;  break;
             case SDLK_l:   e->sun_enabled   = !e->sun_enabled;   break;
+            case SDLK_p:   serve_ball(e); break;
+            case SDLK_o:   e->ball_spin_sel = (e->ball_spin_sel + 1) % 5; serve_ball(e); break;
+            case SDLK_k:   e->ball_autoaim  = !e->ball_autoaim;  serve_ball(e); break;
             case SDLK_g:   e->renderer.cycle(+1); break;
             default: break;
         }
@@ -393,4 +554,5 @@ void game_shutdown(Game* e) {
     e->renderer.shutdown();
     delete e->field_mesh;
     delete e->character;
+    delete e->ball_mesh;
 }

@@ -1,0 +1,38 @@
+# baked palette materials
+newmtl Shirt
+map_Kd man_palette.png
+Kd 0.130711 0.171152 0.186409
+Ke 0 0 0
+d 1
+illum 2
+
+newmtl Skin
+Kd 0.397538 0.254825 0.132921
+Ke 0 0 0
+d 1
+illum 2
+
+newmtl Pants
+Kd 0.048574 0.042353 0.042353
+Ke 0 0 0
+d 1
+illum 2
+
+newmtl Eyes
+Kd 0.020314 0.020314 0.020314
+Ke 0 0 0
+d 1
+illum 2
+
+newmtl Socks
+Kd 0.405654 0.347834 0.347834
+Ke 0 0 0
+d 1
+illum 2
+
+newmtl Hair
+Kd 0.041773 0.027980 0.028818
+Ke 0 0 0
+d 1
+illum 2
+

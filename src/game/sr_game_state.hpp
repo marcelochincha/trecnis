@@ -6,6 +6,7 @@
 #include <render/renderer.hpp>
 #include <engine/anim/skinned_mesh.hpp>
 #include <render/raytrace/bvh.hpp>
+#include <game/ball_physics.hpp>
 #include <vector>
 #include <array>
 
@@ -70,14 +71,35 @@ struct Game {
     vec3     floor_albedo = vec3(0.55f, 0.55f, 0.58f);
     bvh::BVH static_bvh;
 
-    // Skinned character (the one dynamic object). Its per-frame deformed
-    // triangles are folded into the DYNAMIC BVH every frame — skinning and the
-    // dynamic BVH rebuild coexist.
+    // The character (the one dynamic object). Its per-frame triangles are
+    // folded into the DYNAMIC BVH every frame (see build_dynamic). `skin` is
+    // only populated when a skinned/rigged asset is loaded (e.g. the old
+    // robloxian); the current static player model leaves it invalid and
+    // instead gets a small hand-authored idle sway applied to its whole-body
+    // transform each frame — see game_update.
     SkinnedMesh skin;
     mesh*       character  = nullptr;
     vec3        char_albedo = vec3(1.0f, 1.0f, 1.0f);
     float       char_rough  = 0.00f;
-    float       anim_time   = 0.0f;   // skinning clock (seconds)
+    float       anim_time   = 0.0f;   // idle-sway / skinning clock (seconds)
+    vec3        char_base_pos = vec3(0.0f, 0.0f, 0.0f); // placement, sway is added on top
+    float       char_base_yaw = 0.0f;
+
+    // ---- Ball physics (see ball-physics-explained.md) ----
+    // The ball is never integrated per frame: process_hit() solves the whole
+    // flight the moment it is struck and the update loop just reads the stored
+    // trajectory back by time.
+    ballphys::Table      table;
+    ballphys::Prediction ball_pred;
+    float  ball_clock    = 0.0f;    // playback time into the prediction
+    bool   ball_active   = false;
+    float  ball_respawn  = 0.0f;    // countdown to the next serve
+    mesh*  ball_mesh     = nullptr;
+    vec3   ball_pos      = vec3(0.0f, 1.1f, 0.0f);
+    vec3   ball_albedo   = vec3(0.95f, 0.55f, 0.10f);
+    int    ball_spin_sel = 1;       // 0 none, 1 top, 2 back, 3 left, 4 right
+    bool   ball_autoaim  = true;
+    vec3   ball_target   = vec3(0.0f, 0.76f, -0.90f);
 
     std::array<texture, 6> skybox_faces;
     bool skybox_enabled = false;   // baseline: no cubemap / no environment light
