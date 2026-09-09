@@ -81,7 +81,12 @@ struct Game {
     float  racket_speed = 5.0f;                 // u/s, player move speed
     int    racket_autopilot = 0;                // 0 = keyboard, 1 = chase ball, 2 = recede (headless tests)
     long   hits_reported_ = 0;                  // last racket-hit count logged
+    bool   racket_enabled = true;               // demo stages 1-3 hide/disable the racket
     int    bounces_total = 0;
+
+    // --- Technical Progress / Physics Evolution demo (T) ------------------
+    bool   demo_open  = false;                  // demo panel visible + a stage's feature set active
+    int    demo_stage = 1;                      // 1..4
 
     // --- per-frame draw list for the raster backend ----------------------
     std::vector<RasterItem> raster_items;

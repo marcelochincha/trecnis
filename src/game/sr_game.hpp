@@ -41,6 +41,11 @@ void  game_set_backend(Game* e, int index);
 //   0 = keyboard (default)   1 = chase the ball   2 = recede from the ball
 void  game_set_racket_autopilot(Game* e, int mode);
 
+// Open the Technical Progress demo directly at `stage` (1..4) on startup, for
+// headless verification of a single stage. Equivalent to pressing T then the
+// stage number. 0 = leave the demo closed (default).
+void  game_set_demo(Game* e, int stage);
+
 // (Re)build the STATIC BVH from the scene geometry (floor + walls) and push it
 // to the backends that cache it. Called once from game_init; safe to call again.
 void  game_rebuild_static(Game* e);

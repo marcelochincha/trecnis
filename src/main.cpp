@@ -60,6 +60,8 @@ int main(int argc, char* argv[])
             game_set_racket_autopilot(game, 1);
         else if (std::strcmp(argv[i], "--racket-flee") == 0)
             game_set_racket_autopilot(game, 2);
+        else if (i + 1 < argc && std::strcmp(argv[i], "--demo") == 0)
+            game_set_demo(game, atoi(argv[i + 1]));
     }
 
     const float  target_delta_ms = 1000.0f / global_config.target_fps;

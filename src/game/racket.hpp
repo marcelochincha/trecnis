@@ -29,6 +29,9 @@ public:
     // velocity from the actual displacement and moves the collider centre.
     void step(const vec3& dir, const AABB& limits, float dt, float speed);
 
+    // Snap the paddle back to `pos` with zero velocity (orientation/size kept).
+    void recenter(const vec3& pos);
+
     // 12 shaded triangles: box centred at the ORIGIN with the configured
     // orientation baked in. The caller adds position() each frame.
     void append_local_tris(std::vector<bvh::Tri>& out) const;

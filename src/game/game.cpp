@@ -67,23 +67,28 @@ static void set_fixed_view(Game* e) {
     e->cam.setRotation(vec3(pitch, yaw, 0.0f));
 }
 
-// Rewrite dyn_tris_ = [sphere_local_ + ball.pos | racket_local_ + racket.pos],
-// in place (dyn_tris_ is sized once in game_init -> no realloc). Normals and
-// material are translation-invariant, so only the three positions change.
+// Rewrite dyn_tris_ = [sphere + ball.pos | racket + racket.pos] in place. The
+// racket half is dropped (resize down, no realloc — capacity is fixed in
+// game_init) when the racket is disabled by a demo stage. Normals/material are
+// translation-invariant, so only the three positions change.
 static void refresh_dyn_tris(Game* e) {
     const std::size_t ns = e->sphere_local_.size();
+    const std::size_t nr = e->racket_enabled ? e->racket_local_.size() : 0;
+    e->dyn_tris_.resize(ns + nr);
+
     const vec3 bc = e->ball.pos;
     for (std::size_t i = 0; i < ns; ++i) {
         const bvh::Tri& L = e->sphere_local_[i];
         bvh::Tri&       W = e->dyn_tris_[i];
         W = L;  W.v0 = L.v0 + bc;  W.v1 = L.v1 + bc;  W.v2 = L.v2 + bc;
     }
-    const std::size_t nr = e->racket_local_.size();
-    const vec3 rc = e->racket.position();
-    for (std::size_t i = 0; i < nr; ++i) {
-        const bvh::Tri& L = e->racket_local_[i];
-        bvh::Tri&       W = e->dyn_tris_[ns + i];
-        W = L;  W.v0 = L.v0 + rc;  W.v1 = L.v1 + rc;  W.v2 = L.v2 + rc;
+    if (nr) {
+        const vec3 rc = e->racket.position();
+        for (std::size_t i = 0; i < nr; ++i) {
+            const bvh::Tri& L = e->racket_local_[i];
+            bvh::Tri&       W = e->dyn_tris_[ns + i];
+            W = L;  W.v0 = L.v0 + rc;  W.v1 = L.v1 + rc;  W.v2 = L.v2 + rc;
+        }
     }
 }
 
@@ -108,7 +113,8 @@ static RenderScene make_render_scene(Game* e) {
     if (e->court_mesh)
         e->raster_items.push_back({ e->court_mesh, pack_color(vec3(0.62f, 0.62f, 0.66f)), false });
     e->raster_items.push_back({ &e->sphere_mesh_, pack_color(e->sphere_albedo), false });
-    e->raster_items.push_back({ &e->racket_mesh_, pack_color(e->racket_albedo), false });
+    if (e->racket_enabled)
+        e->raster_items.push_back({ &e->racket_mesh_, pack_color(e->racket_albedo), false });
     s.raster_items = &e->raster_items;
 
     s.emissive       = nullptr;               // sun light only this phase
@@ -122,6 +128,69 @@ static RenderScene make_render_scene(Game* e) {
     s.max_bounces = 1;
     s.gi_enabled  = false;
     return s;
+}
+
+// ---------------------------------------------------------------------------
+// Technical Progress / Physics Evolution demo
+// ---------------------------------------------------------------------------
+
+static const vec3 kRacketHome(0.0f, 2.9f, 0.6f);
+
+// Descriptions shown in the demo panel (index 0 = stage 1).
+static const char* kStageTitle[4] = {
+    "STAGE 1 - BASIC BALL",
+    "STAGE 2 - BASIC PHYSICS",
+    "STAGE 3 - ADVANCED PHYSICS",
+    "STAGE 4 - BALL + RACKET",
+};
+static const char* kStageBlurb[4] = {
+    "A 3D sphere, ray-traced in real time, moving at\nconstant velocity and bouncing perfectly (no energy loss).",
+    "Gravity and a restitution coefficient: the ball falls\nand loses energy on every bounce until it settles.",
+    "Same ball and arena, now with aerodynamic drag, angular\nvelocity (spin) and the Magnus effect curving the path.",
+    "The full game state: all of the above plus a movable,\ncontrollable racket and ball<->racket collision (dynamic BVH).",
+};
+
+// Switch the demo to `stage` (1..4): flip the physics feature set and re-seed
+// the ball with initial conditions that make that stage obvious. Stage 4 == the
+// full current game. The scene keeps running live; no historical code is rebuilt
+// — only the existing Ball tunables + the racket_enabled flag are toggled.
+static void apply_demo_stage(Game* e, int stage) {
+    e->demo_stage = std::clamp(stage, 1, 4);
+    Ball& b = e->ball;
+    b.radius     = 0.5f;
+    b.spin_decay = 0.08f;
+    b.rest_speed = 0.5f;
+
+    switch (e->demo_stage) {
+        case 1:  // constant velocity, perfectly elastic, no forces
+            b.gravity = 0.0f;  b.drag = 0.0f;  b.magnus = 0.0f;
+            b.restitution = 1.0f;  b.rest_speed = 0.0f;      // never settle
+            b.reset(vec3(-2.0f, 3.2f, 0.0f), vec3(3.4f, 2.4f, 1.7f), vec3(0.0f, 0.0f, 0.0f));
+            e->racket_enabled = false;
+            break;
+        case 2:  // gravity + restitution
+            b.gravity = 9.81f; b.drag = 0.0f;  b.magnus = 0.0f;
+            b.restitution = 0.75f;
+            b.reset(vec3(-1.5f, 5.2f, 0.0f), vec3(2.6f, 0.4f, 0.5f), vec3(0.0f, 0.0f, 0.0f));
+            e->racket_enabled = false;
+            break;
+        case 3:  // + drag + spin + Magnus
+            b.gravity = 9.81f; b.drag = 0.10f; b.magnus = 0.10f;
+            b.restitution = 0.75f;
+            b.reset(vec3(-3.4f, 3.8f, 0.2f), vec3(3.4f, 0.8f, 0.0f), vec3(0.0f, 20.0f, 0.0f));
+            e->racket_enabled = false;
+            break;
+        case 4:  // full current game
+        default:
+            b.gravity = 9.81f; b.drag = 0.10f; b.magnus = 0.10f;
+            b.restitution = 0.75f;
+            b.reset(vec3(-3.2f, 2.5f, 0.7f), vec3(4.0f, 4.0f, 1.4f), vec3(0.0f, 14.0f, 0.0f));
+            e->racket_enabled = true;
+            break;
+    }
+    e->racket.recenter(kRacketHome);
+    e->bounces_total = 0;
+    e->hits_reported_ = 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -178,33 +247,24 @@ void game_init(Game* e) {
     load_png_texture("res/textures/skybox3/null_plainsky512_up.png", e->skybox_faces[4]);
     load_png_texture("res/textures/skybox3/null_plainsky512_dn.png", e->skybox_faces[5]);
 
-    // --- ball + arena ---
-    e->ball.radius      = 0.5f;
-    e->ball.gravity     = 9.81f;
-    e->ball.restitution = 0.75f;                 // normal KE -> e^2 = 0.56 per bounce
-    e->ball.drag        = 0.10f;                 // quadratic air resistance
-    e->ball.magnus      = 0.10f;                 // Magnus strength
-    e->ball.spin_decay  = 0.08f;                 // spin slowly fades in flight
-    // Lofted toward +X with a touch of +Z to keep the ball near the racket's
-    // depth against the Magnus (-Z) drift, so its arc crosses the racket zone
-    // while still airborne — a natural chance to intercept it.
-    e->ball.pos         = vec3(-3.2f, 2.5f, 0.7f);
-    e->ball.vel         = vec3(4.0f, 4.0f, 1.4f);
-    e->ball.spin        = vec3(0.0f, 14.0f, 0.0f);   // sidespin, rad/s (unchanged)
-    e->arena.min        = vec3(-4.0f, 0.0f, -3.5f);
-    e->arena.max        = vec3( 4.0f, 6.0f,  3.5f);
+    // --- arena ---
+    e->arena.min = vec3(-4.0f, 0.0f, -3.5f);
+    e->arena.max = vec3( 4.0f, 6.0f,  3.5f);
 
     // --- movable racket: a paddle the player translates. Orientation and size
     //     are fixed; only the position moves (step()). Faced nearly toward the
     //     camera (small yaw + slight upward pitch) so its face is clearly
-    //     visible, and placed centrally / a bit forward, in the ball's arc. ---
-    e->racket.configure(/*pos*/   vec3(0.0f, 2.9f, 0.6f),
+    //     visible, centred and a bit forward. ---
+    e->racket.configure(/*pos*/   kRacketHome,
                         /*euler*/ vec3(to_radians(8.0f), to_radians(-6.0f), 0.0f),
                         /*size*/  vec3(1.8f, 1.8f, 0.28f),
                         /*restitution*/ 0.85f);
     e->racket_speed     = 5.0f;
     e->racket_limits.min = vec3(-2.6f, 2.0f, -2.6f);   // paddle stays in the flight zone,
     e->racket_limits.max = vec3( 2.6f, 4.0f,  2.4f);   // clear of walls and the floor
+
+    // --- ball: seed with the full-game (stage 4) feature set ---
+    apply_demo_stage(e, 4);
 
     // --- dynamic geometry: sphere + racket, generated ONCE at the origin ---
     e->sphere_local_.clear();
@@ -216,8 +276,8 @@ void game_init(Game* e) {
 
     e->dyn_tris_.clear();
     e->dyn_tris_.reserve(e->sphere_local_.size() + e->racket_local_.size());
-    e->dyn_tris_.insert(e->dyn_tris_.end(), e->sphere_local_.begin(), e->sphere_local_.end());
-    e->dyn_tris_.insert(e->dyn_tris_.end(), e->racket_local_.begin(), e->racket_local_.end());
+    // refresh_dyn_tris (below) resizes within this capacity and fills it — the
+    // racket half is included only while racket_enabled.
 
     fill_raster_mesh(e->sphere_mesh_, e->sphere_local_);   // local space; moved via setPosition
     fill_raster_mesh(e->racket_mesh_, e->racket_local_);
@@ -280,11 +340,14 @@ static vec3 racket_input(Game* e, float /*dt*/) {
         return d;
     }
     const Uint8* k = SDL_GetKeyboardState(nullptr);
+    // While the demo panel is open the arrow keys drive stage navigation, so the
+    // racket then only responds to WASD + Q/E.
+    const bool arrows = !e->demo_open;
     vec3 d(0.0f, 0.0f, 0.0f);
-    if (k[SDL_SCANCODE_LEFT]  || k[SDL_SCANCODE_A]) d.x -= 1.0f;
-    if (k[SDL_SCANCODE_RIGHT] || k[SDL_SCANCODE_D]) d.x += 1.0f;
-    if (k[SDL_SCANCODE_UP]    || k[SDL_SCANCODE_W]) d.y += 1.0f;
-    if (k[SDL_SCANCODE_DOWN]  || k[SDL_SCANCODE_S]) d.y -= 1.0f;
+    if ((arrows && k[SDL_SCANCODE_LEFT])  || k[SDL_SCANCODE_A]) d.x -= 1.0f;
+    if ((arrows && k[SDL_SCANCODE_RIGHT]) || k[SDL_SCANCODE_D]) d.x += 1.0f;
+    if ((arrows && k[SDL_SCANCODE_UP])    || k[SDL_SCANCODE_W]) d.y += 1.0f;
+    if ((arrows && k[SDL_SCANCODE_DOWN])  || k[SDL_SCANCODE_S]) d.y -= 1.0f;
     if (k[SDL_SCANCODE_Q]) d.z -= 1.0f;
     if (k[SDL_SCANCODE_E]) d.z += 1.0f;
     return d;
@@ -292,14 +355,17 @@ static vec3 racket_input(Game* e, float /*dt*/) {
 
 void game_update(Game* e, float dt) {
     // Move the racket first, so the ball resolves against its new position.
-    e->racket.step(racket_input(e, dt), e->racket_limits, dt, e->racket_speed);
+    // Demo stages 1-3 disable the racket entirely.
+    if (e->racket_enabled)
+        e->racket.step(racket_input(e, dt), e->racket_limits, dt, e->racket_speed);
 
     // Ball::update consumes the real dt with an internal fixed physics sub-step,
     // so the trajectory is frame-rate independent (and it clamps a hitching dt
     // itself — no spiral of death). The racket collider carries its velocity, so
     // the ball's contact response depends on the ball-vs-racket relative motion.
     uint64_t tp = SDL_GetPerformanceCounter();
-    e->bounces_total += e->ball.update(dt, e->arena, &e->racket.collider());
+    e->bounces_total += e->ball.update(dt, e->arena,
+                                       e->racket_enabled ? &e->racket.collider() : nullptr);
     refresh_dyn_tris(e);                           // in-place, no allocation
     e->sphere_mesh_.setPosition(e->ball.pos);      // raster mirrors follow
     e->racket_mesh_.setPosition(e->racket.position());
@@ -319,6 +385,78 @@ void game_update(Game* e, float dt) {
     uint64_t tb = SDL_GetPerformanceCounter();
     e->dynamic_bvh.build(e->dyn_tris_, e->dynamic_strategy);   // Morton, per frame
     e->metrics.dyn_build_ms = Metrics::ema(e->metrics.dyn_build_ms, ms_since(tb));
+}
+
+// The Technical Progress panel (T). Explains what each stage achieved and shows
+// live readouts for the currently selected stage. Uses only the existing text
+// HUD; no new UI system.
+static void draw_demo_panel(Game* e, double fps) {
+    const Ball& b = e->ball;
+    const int   s = e->demo_stage;                    // 1..4
+    auto chk = [](bool on) { return on ? "[x]" : "[ ]"; };
+
+    // Feature set per stage (matches apply_demo_stage).
+    const bool f_grav   = (s >= 2);
+    const bool f_rest   = (s >= 2);
+    const bool f_drag   = (s >= 3);
+    const bool f_spin   = (s >= 3);
+    const bool f_magnus = (s >= 3);
+    const bool f_racket = (s >= 4);
+
+    char p[1400];
+    int n = std::snprintf(p, sizeof(p),
+        "=== TECHNICAL PROGRESS  -  Physics Evolution ===\n"
+        "  stage %d / 4    LEFT / RIGHT change    1-4 select    T / ESC close\n"
+        "\n%s\n%s\n\n"
+        " %s Gravity\n"
+        " %s Restitution (energy loss)\n"
+        " %s Aerodynamic drag\n"
+        " %s Spin (angular velocity)\n"
+        " %s Magnus effect\n"
+        " %s Movable racket + collision\n\n",
+        s, kStageTitle[s - 1], kStageBlurb[s - 1],
+        chk(f_grav), chk(f_rest), chk(f_drag), chk(f_spin), chk(f_magnus), chk(f_racket));
+
+    if (s == 1) {
+        n += std::snprintf(p + n, sizeof(p) - n,
+            " Ball speed : %.2f  (constant, elastic e = 1.0)\n"
+            " Ball pos   : (%.1f, %.1f, %.1f)\n"
+            " Bounces    : %d\n",
+            b.speed(), b.pos.x, b.pos.y, b.pos.z, e->bounces_total);
+    } else if (s == 2) {
+        n += std::snprintf(p + n, sizeof(p) - n,
+            " Gravity     : %.2f      Restitution : %.2f\n"
+            " Ball speed  : %.2f\n"
+            " Ball pos    : (%.1f, %.1f, %.1f)\n"
+            " Bounces     : %d\n",
+            b.gravity, b.restitution, b.speed(),
+            b.pos.x, b.pos.y, b.pos.z, e->bounces_total);
+    } else if (s == 3) {
+        n += std::snprintf(p + n, sizeof(p) - n,
+            " Gravity %.2f  Restitution %.2f  Drag %.2f  Magnus %.2f\n"
+            " Ball speed       : %.2f\n"
+            " Angular velocity : (%.1f, %.1f, %.1f)   |w| %.1f\n"
+            " Ball pos         : (%.1f, %.1f, %.1f)\n",
+            b.gravity, b.restitution, b.drag, b.magnus, b.speed(),
+            b.spin.x, b.spin.y, b.spin.z, b.spin_rate(),
+            b.pos.x, b.pos.y, b.pos.z);
+    } else {
+        const vec3 rp = e->racket.position();
+        n += std::snprintf(p + n, sizeof(p) - n,
+            " Gravity %.2f  Restitution %.2f  Drag %.2f  Magnus %.2f\n"
+            " Ball speed : %.2f    |w| %.1f    bounces %d\n"
+            " Racket pos : (%.1f, %.1f, %.1f)   ball<->racket hits: %ld\n"
+            " Racket control : WASD + Q/E   (arrows navigate stages)\n",
+            b.gravity, b.restitution, b.drag, b.magnus,
+            b.speed(), b.spin_rate(), e->bounces_total,
+            rp.x, rp.y, rp.z, e->ball.racket_hits);
+    }
+    std::snprintf(p + n, sizeof(p) - n,
+        "\n Backend %s   FPS %.0f\n",
+        e->renderer.current_name(), fps);
+
+    draw_text(e->fb, 13, 13, p, 0xCC000000, 0xCC000000);
+    draw_text(e->fb, 12, 12, p, 0xFFFFFFFF);
 }
 
 void game_render(Game* e, SDL_Texture* sdl_fb_texture, float dt) {
@@ -354,7 +492,9 @@ void game_render(Game* e, SDL_Texture* sdl_fb_texture, float dt) {
         std::fflush(stdout);
     }
 
-    if (e->show_hud) {
+    if (e->demo_open) {
+        draw_demo_panel(e, fps);
+    } else if (e->show_hud) {
 
         vec3 rp = e->racket.position(), rv = e->racket.velocity();
         char hud[800];
@@ -396,18 +536,49 @@ void game_render(Game* e, SDL_Texture* sdl_fb_texture, float dt) {
 
 void game_handle_events(Game* e, SDL_Event& event, bool& running) {
     if (event.type == SDL_QUIT) { running = false; return; }
+    if (event.type != SDL_KEYDOWN) return;
 
-    if (event.type == SDL_KEYDOWN) {
-        switch (event.key.keysym.sym) {
-            case SDLK_ESCAPE: running = false;        break;
-            case SDLK_TAB:    e->renderer.cycle(-1);  break;
-            case SDLK_g:      e->renderer.cycle(+1);  break;
-            default: break;
+    const SDL_Keycode k = event.key.keysym.sym;
+
+    // T toggles the Technical Progress demo. Leaving it restores the full game
+    // (stage 4); the last stage is remembered for the next open.
+    if (k == SDLK_t) {
+        e->demo_open = !e->demo_open;
+        apply_demo_stage(e, e->demo_open ? e->demo_stage : 4);
+        std::cout << (e->demo_open ? "Demo: open  " : "Demo: closed  ")
+                  << (e->demo_open ? kStageTitle[e->demo_stage - 1] : "") << "\n";
+        return;
+    }
+
+    if (e->demo_open) {
+        if (k == SDLK_ESCAPE) {
+            e->demo_open = false;
+            apply_demo_stage(e, 4);
+            std::cout << "Demo: closed\n";
+            return;
         }
-        if (event.key.keysym.sym == SDLK_TAB || event.key.keysym.sym == SDLK_g) {
-            std::cout << "Backend: " << e->renderer.current_name()
-                      << (e->renderer.current_available() ? "" : " (unavailable)") << "\n";
+        if (k == SDLK_LEFT  || k == SDLK_RIGHT) {
+            apply_demo_stage(e, e->demo_stage + (k == SDLK_RIGHT ? 1 : -1));
+            std::cout << kStageTitle[e->demo_stage - 1] << "\n";
+            return;
         }
+        if (k >= SDLK_1 && k <= SDLK_4) {
+            apply_demo_stage(e, (k - SDLK_1) + 1);
+            std::cout << kStageTitle[e->demo_stage - 1] << "\n";
+            return;
+        }
+        // TAB / G still cycle the backend while the demo is open.
+    }
+
+    switch (k) {
+        case SDLK_ESCAPE: running = false;        break;   // (demo closed only)
+        case SDLK_TAB:    e->renderer.cycle(-1);  break;
+        case SDLK_g:      e->renderer.cycle(+1);  break;
+        default: break;
+    }
+    if (k == SDLK_TAB || k == SDLK_g) {
+        std::cout << "Backend: " << e->renderer.current_name()
+                  << (e->renderer.current_available() ? "" : " (unavailable)") << "\n";
     }
 }
 
@@ -431,4 +602,11 @@ void game_set_backend(Game* e, int index) {
 
 void game_set_racket_autopilot(Game* e, int mode) {
     e->racket_autopilot = mode;
+}
+
+void game_set_demo(Game* e, int stage) {
+    if (stage < 1 || stage > 4) return;
+    e->demo_open = true;
+    apply_demo_stage(e, stage);
+    std::cout << "Demo: open  " << kStageTitle[e->demo_stage - 1] << "\n";
 }

@@ -59,6 +59,13 @@ void Racket::step(const vec3& dir, const AABB& limits, float dt, float speed) {
     obb_.vel    = vel_;   // the ball's contact response uses the paddle's velocity
 }
 
+void Racket::recenter(const vec3& p) {
+    pos_        = p;
+    vel_        = vec3(0.0f, 0.0f, 0.0f);
+    obb_.center = p;
+    obb_.vel    = vec3(0.0f, 0.0f, 0.0f);
+}
+
 void Racket::append_local_tris(std::vector<bvh::Tri>& out) const {
     add_oriented_box(out, vec3(0.0f, 0.0f, 0.0f), obb_.axis, obb_.half, albedo_, 0.35f);
 }

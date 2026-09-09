@@ -69,6 +69,15 @@ struct Ball {
     // contacts this frame (rebounds; a settle onto the floor does not count).
     int update(float dt, const AABB& bounds, const Obb* racket = nullptr);
 
+    // Re-seed the ball's state (used when a demo stage switches). Tunables
+    // (gravity/drag/...) are plain fields the caller sets separately.
+    void reset(const vec3& p, const vec3& v, const vec3& w) {
+        pos = p; vel = v; spin = w;
+        accum_ = 0.0f;
+        racket_hits = 0;
+        hit_speed_in = hit_speed_out = hit_racket_speed = 0.0f;
+    }
+
     float speed()     const { return magnitude(vel); }
     float spin_rate() const { return magnitude(spin); }
 
