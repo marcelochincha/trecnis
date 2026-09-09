@@ -1,4 +1,5 @@
 #include <game/racket.hpp>
+#include <algorithm>
 
 // Emit an oriented box (centre `c`, orthonormal axes `R`, half-extents `half`)
 // as 12 shaded triangles. Same corner indexing / winding as geom::add_box, with
@@ -28,24 +29,34 @@ static void add_oriented_box(std::vector<bvh::Tri>& out, const vec3& c,
 void Racket::configure(const vec3& pos, const vec3& euler, const vec3& size,
                        float restitution) {
     pos_   = pos;
+    vel_   = vec3(0.0f, 0.0f, 0.0f);
     euler_ = euler;
     size_  = size;
 
     mat4 rot = rotationMatrix(euler_.x, euler_.y, euler_.z);   // ZYX
-    vec3 R[3] = {
-        vec3(rot * vec3(1.0f, 0.0f, 0.0f)),
-        vec3(rot * vec3(0.0f, 1.0f, 0.0f)),
-        vec3(rot * vec3(0.0f, 0.0f, 1.0f)),
-    };
-
-    obb_.center      = pos_;
-    obb_.axis[0]     = R[0];
-    obb_.axis[1]     = R[1];
-    obb_.axis[2]     = R[2];
+    obb_.axis[0]     = vec3(rot * vec3(1.0f, 0.0f, 0.0f));
+    obb_.axis[1]     = vec3(rot * vec3(0.0f, 1.0f, 0.0f));
+    obb_.axis[2]     = vec3(rot * vec3(0.0f, 0.0f, 1.0f));
     obb_.half        = size_ * 0.5f;
+    obb_.center      = pos_;
     obb_.restitution = restitution;
 }
 
-void Racket::append_tris(std::vector<bvh::Tri>& out) const {
-    add_oriented_box(out, obb_.center, obb_.axis, obb_.half, albedo_, 0.35f);
+void Racket::step(const vec3& dir, const AABB& limits, float dt, float speed) {
+    vec3  d  = dir;
+    float dl = magnitude(d);
+    if (dl > 1e-4f) d = d / dl;                 // cap diagonal speed
+
+    vec3 prev = pos_;
+    pos_ = pos_ + d * (speed * dt);
+    pos_.x = std::clamp(pos_.x, limits.min.x, limits.max.x);
+    pos_.y = std::clamp(pos_.y, limits.min.y, limits.max.y);
+    pos_.z = std::clamp(pos_.z, limits.min.z, limits.max.z);
+
+    vel_ = (dt > 1e-6f) ? (pos_ - prev) * (1.0f / dt) : vec3(0.0f, 0.0f, 0.0f);
+    obb_.center = pos_;
+}
+
+void Racket::append_local_tris(std::vector<bvh::Tri>& out) const {
+    add_oriented_box(out, vec3(0.0f, 0.0f, 0.0f), obb_.axis, obb_.half, albedo_, 0.35f);
 }

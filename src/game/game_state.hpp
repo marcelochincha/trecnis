@@ -1,12 +1,14 @@
 #pragma once
 // Internal header — included only by game/ sub-modules, never by render/.
 //
-// Checkpoint scene: a static box arena (floor + 3 walls) + a static racket
-// (tilted paddle) in the STATIC BVH, and one ray-traced sphere in the DYNAMIC
-// BVH. The ball flies under gravity + air drag + Magnus and bounces off the
+// Checkpoint scene: a static box arena (floor + 3 walls) in the STATIC BVH, and
+// in the DYNAMIC BVH a ray-traced sphere plus a user-movable racket (tilted
+// paddle). The ball flies under gravity + air drag + Magnus and bounces off the
 // arena and the racket with a restitution coefficient, integrated frame-rate
-// independently with a fixed sub-step. The racket does not move yet: no velocity
-// transfer, no contact friction / impact spin. No player, score, AI.
+// independently with a fixed sub-step. The racket is translated by player input
+// and stays inside racket_limits; its velocity is tracked for telemetry but is
+// NOT fed into the ball's bounce yet (no velocity transfer, no impact spin, no
+// contact friction). No full Player, animation, score, AI.
 
 #include <SDL2/SDL.h>
 #include <vector>
@@ -56,22 +58,29 @@ struct Game {
     std::size_t        static_tri_count = 0;
     double             static_build_ms = 0.0;
 
-    // --- DYNAMIC geometry: the sphere ---------------------------------------
-    // sphere_local_  : generated once, centred at the origin (radius = ball.radius)
-    // sphere_world_  : sphere_local_ translated to ball.pos; rewritten in place
-    //                  every frame (capacity fixed in game_init -> no per-frame
-    //                  allocation in the game layer)
+    // --- DYNAMIC geometry: the sphere + the movable racket -----------------
+    // *_local_  : generated once, centred at the origin
+    // dyn_tris_ : [sphere | racket], each part rewritten in place every frame
+    //             (translated to its owner's position). Capacity fixed in
+    //             game_init -> no per-frame allocation in the game layer.
     std::vector<bvh::Tri> sphere_local_;
-    std::vector<bvh::Tri> sphere_world_;
+    std::vector<bvh::Tri> racket_local_;
+    std::vector<bvh::Tri> dyn_tris_;
     bvh::BVH              dynamic_bvh;
     bvh::BuildStrategy    dynamic_strategy = bvh::Morton;
     mesh                 sphere_mesh_;          // raster mirror, local space + setPosition
+    mesh                 racket_mesh_;          // raster mirror, local space + setPosition
     vec3                 sphere_albedo = vec3(0.90f, 0.30f, 0.20f);
+    vec3                 racket_albedo = vec3(0.20f, 0.45f, 0.85f);
 
     // --- physics state -----------------------------------------------------
     Ball   ball;
-    Racket racket;                              // static paddle (folded into static BVH)
+    Racket racket;                              // user-movable paddle (dynamic BVH)
     AABB   arena;                               // ball centre stays inside this
+    AABB   racket_limits;                       // racket centre stays inside this
+    float  racket_speed = 5.0f;                 // u/s, player move speed
+    float  racket_clock_ = 0.0f;                // autopilot time (test only)
+    bool   racket_autopilot = false;            // --racket-auto: scripted move for headless tests
     int    bounces_total = 0;
 
     // --- per-frame draw list for the raster backend ----------------------

@@ -36,6 +36,10 @@ void  game_destroy(Game* e);
 // TAB/G keys. No-op if the index is out of range or the backend is unavailable.
 void  game_set_backend(Game* e, int index);
 
+// Drive the racket on a scripted oscillation instead of reading the keyboard,
+// so headless / CI runs can exercise racket movement + collision reproducibly.
+void  game_set_racket_autopilot(Game* e, bool on);
+
 // (Re)build the STATIC BVH from the scene geometry (floor + walls) and push it
 // to the backends that cache it. Called once from game_init; safe to call again.
 void  game_rebuild_static(Game* e);

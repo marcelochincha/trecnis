@@ -67,18 +67,23 @@ static void set_fixed_view(Game* e) {
     e->cam.setRotation(vec3(pitch, yaw, 0.0f));
 }
 
-// Rewrite sphere_world_ = sphere_local_ translated to `c`. In-place, no realloc
-// (sphere_world_ is sized once in game_init). Normals/material are translation-
-// invariant so only the three positions change.
-static void refresh_sphere_world(Game* e, const vec3& c) {
-    const std::size_t n = e->sphere_local_.size();
-    for (std::size_t i = 0; i < n; ++i) {
+// Rewrite dyn_tris_ = [sphere_local_ + ball.pos | racket_local_ + racket.pos],
+// in place (dyn_tris_ is sized once in game_init -> no realloc). Normals and
+// material are translation-invariant, so only the three positions change.
+static void refresh_dyn_tris(Game* e) {
+    const std::size_t ns = e->sphere_local_.size();
+    const vec3 bc = e->ball.pos;
+    for (std::size_t i = 0; i < ns; ++i) {
         const bvh::Tri& L = e->sphere_local_[i];
-        bvh::Tri&       W = e->sphere_world_[i];
-        W    = L;
-        W.v0 = L.v0 + c;
-        W.v1 = L.v1 + c;
-        W.v2 = L.v2 + c;
+        bvh::Tri&       W = e->dyn_tris_[i];
+        W = L;  W.v0 = L.v0 + bc;  W.v1 = L.v1 + bc;  W.v2 = L.v2 + bc;
+    }
+    const std::size_t nr = e->racket_local_.size();
+    const vec3 rc = e->racket.position();
+    for (std::size_t i = 0; i < nr; ++i) {
+        const bvh::Tri& L = e->racket_local_[i];
+        bvh::Tri&       W = e->dyn_tris_[ns + i];
+        W = L;  W.v0 = L.v0 + rc;  W.v1 = L.v1 + rc;  W.v2 = L.v2 + rc;
     }
 }
 
@@ -94,7 +99,7 @@ static RenderScene make_render_scene(Game* e) {
 
     s.static_bvh       = &e->static_bvh;
     s.dynamic_bvh      = &e->dynamic_bvh;
-    s.brute_tris       = &e->sphere_world_;   // brute-force / Embree-dyn source
+    s.brute_tris       = &e->dyn_tris_;       // brute-force / Embree-dyn source
     s.use_bvh          = true;
     s.static_strategy  = e->static_strategy;
     s.dynamic_strategy = e->dynamic_strategy;
@@ -103,6 +108,7 @@ static RenderScene make_render_scene(Game* e) {
     if (e->court_mesh)
         e->raster_items.push_back({ e->court_mesh, pack_color(vec3(0.62f, 0.62f, 0.66f)), false });
     e->raster_items.push_back({ &e->sphere_mesh_, pack_color(e->sphere_albedo), false });
+    e->raster_items.push_back({ &e->racket_mesh_, pack_color(e->racket_albedo), false });
     s.raster_items = &e->raster_items;
 
     s.emissive       = nullptr;               // sun light only this phase
@@ -141,10 +147,8 @@ void game_rebuild_static(Game* e) {
     geom::add_box(tris, vec3(-4.10f, 0.0f, -4.0f),  vec3(-4.0f, 6.0f, 4.0f), wall_col, 0.80f); // left
     geom::add_box(tris, vec3( 4.0f,  0.0f, -4.0f),  vec3(4.10f, 6.0f, 4.0f), wall_col, 0.80f); // right
 
-    // Static racket, folded into the SAME static set: it appears in every
-    // backend and lives in the static BVH with no extra plumbing.
-    e->racket.append_tris(tris);
-
+    // The racket is dynamic now (movable) -> it lives in the DYNAMIC BVH, not
+    // here. Only the immovable arena is static.
     e->static_tri_count = tris.size();
 
     delete e->court_mesh;
@@ -157,9 +161,9 @@ void game_rebuild_static(Game* e) {
     e->emissive_tris.clear();   // none, but keep the pattern for later phases
     e->renderer.reload_scene(e->static_bvh, e->skybox_faces, e->emissive_tris);
 
-    std::cout << "Static: " << e->static_bvh.triangle_count() << " tris ("
-              << e->racket.tri_count() << " racket), " << e->static_bvh.node_count()
-              << " nodes, SAH build " << e->static_build_ms << " ms\n";
+    std::cout << "Static arena: " << e->static_bvh.triangle_count() << " tris, "
+              << e->static_bvh.node_count() << " nodes, SAH build "
+              << e->static_build_ms << " ms\n";
 }
 
 void game_init(Game* e) {
@@ -187,28 +191,40 @@ void game_init(Game* e) {
     e->arena.min        = vec3(-4.0f, 0.0f, -3.5f);
     e->arena.max        = vec3( 4.0f, 6.0f,  3.5f);
 
-    // --- static racket: a tilted paddle standing in the arena, in the path of
-    //     the bouncing ball. Static this checkpoint (no velocity transfer). ---
-    e->racket.configure(/*pos*/   vec3(-0.2f, 1.3f, -1.6f),
+    // --- movable racket: a tilted paddle the player translates. Orientation and
+    //     size are fixed; only the position moves (step()). ---
+    e->racket.configure(/*pos*/   vec3(0.0f, 2.7f, -1.2f),
                         /*euler*/ vec3(to_radians(0.0f), to_radians(-25.0f), 0.0f),
-                        /*size*/  vec3(2.4f, 2.4f, 0.32f),
+                        /*size*/  vec3(1.8f, 1.8f, 0.28f),
                         /*restitution*/ 0.85f);
+    e->racket_speed     = 5.0f;
+    e->racket_limits.min = vec3(-2.6f, 2.0f, -2.6f);   // paddle stays in the flight zone,
+    e->racket_limits.max = vec3( 2.6f, 4.0f,  2.4f);   // clear of walls and the floor
 
-    // --- sphere geometry: generate ONCE, centred at origin ---
+    // --- dynamic geometry: sphere + racket, generated ONCE at the origin ---
     e->sphere_local_.clear();
     geom::add_sphere(e->sphere_local_, vec3(0.0f, 0.0f, 0.0f), e->ball.radius,
                      e->sphere_albedo, /*rough*/ 0.55f, /*metal*/ 0.0f, /*ior*/ 1.5f,
                      /*slices*/ 20, /*stacks*/ 14, /*smooth*/ true);
-    e->sphere_world_.assign(e->sphere_local_.begin(), e->sphere_local_.end()); // size + capacity fixed here
-    fill_raster_mesh(e->sphere_mesh_, e->sphere_local_);   // local space; moved via setPosition
+    e->racket_local_.clear();
+    e->racket.append_local_tris(e->racket_local_);         // 12 tris, orientation baked
 
-    e->raster_items.reserve(2);
+    e->dyn_tris_.clear();
+    e->dyn_tris_.reserve(e->sphere_local_.size() + e->racket_local_.size());
+    e->dyn_tris_.insert(e->dyn_tris_.end(), e->sphere_local_.begin(), e->sphere_local_.end());
+    e->dyn_tris_.insert(e->dyn_tris_.end(), e->racket_local_.begin(), e->racket_local_.end());
+
+    fill_raster_mesh(e->sphere_mesh_, e->sphere_local_);   // local space; moved via setPosition
+    fill_raster_mesh(e->racket_mesh_, e->racket_local_);
+
+    e->raster_items.reserve(3);
 
     // --- build BVHs ---
     game_rebuild_static(e);
-    refresh_sphere_world(e, e->ball.pos);
-    e->dynamic_bvh.build(e->sphere_world_, e->dynamic_strategy);   // Morton
+    refresh_dyn_tris(e);
+    e->dynamic_bvh.build(e->dyn_tris_, e->dynamic_strategy);   // Morton
     e->sphere_mesh_.setPosition(e->ball.pos);
+    e->racket_mesh_.setPosition(e->racket.position());
 
     // --- renderer ---
     int req = global_config.num_workers;
@@ -220,25 +236,55 @@ void game_init(Game* e) {
 
     e->metrics.primary_rays = (std::size_t)e->fb.width * (std::size_t)e->fb.height;
 
-    std::cout << "Sphere: " << e->sphere_local_.size() << " tris (20x14 UV, smooth)\n"
+    std::cout << "Dynamic: " << e->sphere_local_.size() << " sphere + "
+              << e->racket_local_.size() << " racket tris\n"
+              << "Racket: WASD / arrows move (X/Y), Q/E depth (Z)"
+              << (e->racket_autopilot ? "  [autopilot]" : "") << "\n"
               << "Renderer: " << e->renderer.count() << " backends, "
               << e->renderer.workers() << " workers, starting on '"
               << e->renderer.current_name() << "'\n";
 }
 
+// Player intent for the racket this frame: -1/0/+1 per axis from the existing
+// SDL keyboard state (WASD or arrows on X/Y, Q/E on Z). --racket-auto replaces
+// it with a scripted oscillation so headless tests are reproducible.
+static vec3 racket_input(Game* e, float dt) {
+    if (e->racket_autopilot) {
+        e->racket_clock_ += dt;
+        float t = e->racket_clock_;
+        // Full sweep in X, gentle bob in Y, so the paddle patrols the flight
+        // zone and meets the ball mid-arc rather than scraping the floor.
+        return vec3(std::sin(t * 1.4f), 0.30f * std::sin(t * 2.1f), 0.0f);
+    }
+    const Uint8* k = SDL_GetKeyboardState(nullptr);
+    vec3 d(0.0f, 0.0f, 0.0f);
+    if (k[SDL_SCANCODE_LEFT]  || k[SDL_SCANCODE_A]) d.x -= 1.0f;
+    if (k[SDL_SCANCODE_RIGHT] || k[SDL_SCANCODE_D]) d.x += 1.0f;
+    if (k[SDL_SCANCODE_UP]    || k[SDL_SCANCODE_W]) d.y += 1.0f;
+    if (k[SDL_SCANCODE_DOWN]  || k[SDL_SCANCODE_S]) d.y -= 1.0f;
+    if (k[SDL_SCANCODE_Q]) d.z -= 1.0f;
+    if (k[SDL_SCANCODE_E]) d.z += 1.0f;
+    return d;
+}
+
 void game_update(Game* e, float dt) {
+    // Move the racket first, so the ball resolves against its new position.
+    e->racket.step(racket_input(e, dt), e->racket_limits, dt, e->racket_speed);
+
     // Ball::update consumes the real dt with an internal fixed physics sub-step,
     // so the trajectory is frame-rate independent (and it clamps a hitching dt
-    // itself — no spiral of death).
+    // itself — no spiral of death). The racket's velocity is NOT passed in: its
+    // motion does not add energy to the ball this checkpoint.
     uint64_t tp = SDL_GetPerformanceCounter();
     e->bounces_total += e->ball.update(dt, e->arena, &e->racket.collider());
-    refresh_sphere_world(e, e->ball.pos);          // in-place, no allocation
-    e->sphere_mesh_.setPosition(e->ball.pos);      // raster mirror follows
+    refresh_dyn_tris(e);                           // in-place, no allocation
+    e->sphere_mesh_.setPosition(e->ball.pos);      // raster mirrors follow
+    e->racket_mesh_.setPosition(e->racket.position());
     e->metrics.physics_ms = Metrics::ema(e->metrics.physics_ms, ms_since(tp));
 
     // Frame order: update -> build dynamic BVH -> render.
     uint64_t tb = SDL_GetPerformanceCounter();
-    e->dynamic_bvh.build(e->sphere_world_, e->dynamic_strategy);   // Morton, per frame
+    e->dynamic_bvh.build(e->dyn_tris_, e->dynamic_strategy);   // Morton, per frame
     e->metrics.dyn_build_ms = Metrics::ema(e->metrics.dyn_build_ms, ms_since(tb));
 }
 
@@ -264,20 +310,23 @@ void game_render(Game* e, SDL_Texture* sdl_fb_texture, float dt) {
     double elapsed = double(SDL_GetPerformanceCounter() - t_start) / double(SDL_GetPerformanceFrequency());
     if (global_config.debug_mode && elapsed >= next_log) {
         next_log += 2.0;
+        vec3 rp = e->racket.position(), rv = e->racket.velocity();
         std::printf("[perf] t=%5.1fs | fps %3.0f | frame %5.2f ms | physics %.3f | dynBVH %.3f | render %5.2f "
-                    "| ball(%.2f,%.2f,%.2f) |v|=%.2f spin=%.1f bounces %d racket %ld\n",
+                    "| ball(%.2f,%.2f,%.2f) |v|=%.2f bounces %d racket %ld "
+                    "| rkt(%.2f,%.2f,%.2f) |vr|=%.2f\n",
                     elapsed, fps, m.frame_ms, m.physics_ms, m.dyn_build_ms, m.render_ms,
                     e->ball.pos.x, e->ball.pos.y, e->ball.pos.z,
-                    e->ball.speed(), e->ball.spin_rate(), e->bounces_total, e->ball.racket_hits);
+                    e->ball.speed(), e->bounces_total, e->ball.racket_hits,
+                    rp.x, rp.y, rp.z, magnitude(rv));
         std::fflush(stdout);
     }
 
     if (e->show_hud) {
 
-        vec3 rn = e->racket.face_normal();
-        char hud[760];
+        vec3 rp = e->racket.position(), rv = e->racket.velocity();
+        char hud[800];
         std::snprintf(hud, sizeof(hud),
-            "PingPong RT  -  ball <-> static racket\n"
+            "PingPong RT  -  movable racket + control\n"
             "Backend : %s%s   (TAB / G to cycle)\n"
             "FPS     : %.0f      Frame : %.2f ms\n"
             "Physics : %.3f ms   Dyn BVH build : %.3f ms\n"
@@ -287,8 +336,8 @@ void game_render(Game* e, SDL_Texture* sdl_fb_texture, float dt) {
             "Ball    : p(%.1f, %.1f, %.1f)  speed %.2f  bounces: %d\n"
             "Spin    : (%.1f, %.1f, %.1f) rad/s   |w| %.1f\n"
             "Model   : g %.2f  e %.2f  drag %.2f  magnus %.2f  (1/240 s)\n"
-            "Racket  : p(%.1f, %.1f, %.1f)  n(%.2f,%.2f,%.2f)  hits: %ld\n"
-            "[ESC] quit",
+            "Racket  : p(%.1f, %.1f, %.1f)  v(%.1f, %.1f, %.1f)  hits: %ld%s\n"
+            "Move    : WASD / arrows = X/Y   Q/E = Z        [ESC] quit",
             e->renderer.current_name(),
             e->renderer.current_available() ? "" : " (n/a)",
             fps, m.frame_ms,
@@ -299,8 +348,8 @@ void game_render(Game* e, SDL_Texture* sdl_fb_texture, float dt) {
             e->ball.pos.x, e->ball.pos.y, e->ball.pos.z, e->ball.speed(), e->bounces_total,
             e->ball.spin.x, e->ball.spin.y, e->ball.spin.z, e->ball.spin_rate(),
             e->ball.gravity, e->ball.restitution, e->ball.drag, e->ball.magnus,
-            e->racket.position().x, e->racket.position().y, e->racket.position().z,
-            rn.x, rn.y, rn.z, e->ball.racket_hits);
+            rp.x, rp.y, rp.z, rv.x, rv.y, rv.z, e->ball.racket_hits,
+            e->racket_autopilot ? "  [auto]" : "");
 
         draw_text(e->fb, 11, 11, hud, 0xAA000000, 0xAA000000);
         draw_text(e->fb, 10, 10, hud, 0xFFFFFFFF);
@@ -343,4 +392,8 @@ void game_set_backend(Game* e, int index) {
     else
         std::cout << "Backend " << index << " unavailable, staying on '"
                   << e->renderer.current_name() << "'\n";
+}
+
+void game_set_racket_autopilot(Game* e, bool on) {
+    e->racket_autopilot = on;
 }
