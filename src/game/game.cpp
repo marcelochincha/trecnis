@@ -185,16 +185,21 @@ void game_init(Game* e) {
     e->ball.drag        = 0.10f;                 // quadratic air resistance
     e->ball.magnus      = 0.10f;                 // Magnus strength
     e->ball.spin_decay  = 0.08f;                 // spin slowly fades in flight
-    e->ball.pos         = vec3(-3.3f, 3.9f, 0.2f);
-    e->ball.vel         = vec3(4.2f, 1.8f, 0.3f);
-    e->ball.spin        = vec3(0.0f, 14.0f, 0.0f);   // sidespin, rad/s
+    // Lofted toward +X with a touch of +Z to keep the ball near the racket's
+    // depth against the Magnus (-Z) drift, so its arc crosses the racket zone
+    // while still airborne — a natural chance to intercept it.
+    e->ball.pos         = vec3(-3.2f, 2.5f, 0.7f);
+    e->ball.vel         = vec3(4.0f, 4.0f, 1.4f);
+    e->ball.spin        = vec3(0.0f, 14.0f, 0.0f);   // sidespin, rad/s (unchanged)
     e->arena.min        = vec3(-4.0f, 0.0f, -3.5f);
     e->arena.max        = vec3( 4.0f, 6.0f,  3.5f);
 
-    // --- movable racket: a tilted paddle the player translates. Orientation and
-    //     size are fixed; only the position moves (step()). ---
-    e->racket.configure(/*pos*/   vec3(0.0f, 2.7f, -1.2f),
-                        /*euler*/ vec3(to_radians(0.0f), to_radians(-25.0f), 0.0f),
+    // --- movable racket: a paddle the player translates. Orientation and size
+    //     are fixed; only the position moves (step()). Faced nearly toward the
+    //     camera (small yaw + slight upward pitch) so its face is clearly
+    //     visible, and placed centrally / a bit forward, in the ball's arc. ---
+    e->racket.configure(/*pos*/   vec3(0.0f, 2.9f, 0.6f),
+                        /*euler*/ vec3(to_radians(8.0f), to_radians(-6.0f), 0.0f),
                         /*size*/  vec3(1.8f, 1.8f, 0.28f),
                         /*restitution*/ 0.85f);
     e->racket_speed     = 5.0f;
@@ -250,11 +255,14 @@ void game_init(Game* e) {
 // it with a scripted oscillation so headless tests are reproducible.
 static vec3 racket_input(Game* e, float dt) {
     if (e->racket_autopilot) {
-        e->racket_clock_ += dt;
-        float t = e->racket_clock_;
-        // Full sweep in X, gentle bob in Y, so the paddle patrols the flight
-        // zone and meets the ball mid-arc rather than scraping the floor.
-        return vec3(std::sin(t * 1.4f), 0.30f * std::sin(t * 2.1f), 0.0f);
+        // Test affordance only: chase the ball in X/Y (per-axis intent, capped
+        // by racket_speed + limits) so a mid-air interception is demonstrable in
+        // headless runs. The real game input path below is untouched.
+        vec3 to_ball = e->ball.pos - e->racket.position();
+        vec3 d(0.0f, 0.0f, 0.0f);
+        if (std::fabs(to_ball.x) > 0.05f) d.x = to_ball.x > 0.0f ? 1.0f : -1.0f;
+        if (std::fabs(to_ball.y) > 0.05f) d.y = to_ball.y > 0.0f ? 1.0f : -1.0f;
+        return d;
     }
     const Uint8* k = SDL_GetKeyboardState(nullptr);
     vec3 d(0.0f, 0.0f, 0.0f);
