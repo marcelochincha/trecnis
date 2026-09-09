@@ -79,7 +79,8 @@ struct Game {
     AABB   arena;                               // ball centre stays inside this
     AABB   racket_limits;                       // racket centre stays inside this
     float  racket_speed = 5.0f;                 // u/s, player move speed
-    bool   racket_autopilot = false;            // --racket-auto: ball-tracking move for headless tests
+    int    racket_autopilot = 0;                // 0 = keyboard, 1 = chase ball, 2 = recede (headless tests)
+    long   hits_reported_ = 0;                  // last racket-hit count logged
     int    bounces_total = 0;
 
     // --- per-frame draw list for the raster backend ----------------------

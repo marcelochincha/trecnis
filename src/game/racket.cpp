@@ -39,6 +39,7 @@ void Racket::configure(const vec3& pos, const vec3& euler, const vec3& size,
     obb_.axis[2]     = vec3(rot * vec3(0.0f, 0.0f, 1.0f));
     obb_.half        = size_ * 0.5f;
     obb_.center      = pos_;
+    obb_.vel         = vec3(0.0f, 0.0f, 0.0f);
     obb_.restitution = restitution;
 }
 
@@ -55,6 +56,7 @@ void Racket::step(const vec3& dir, const AABB& limits, float dt, float speed) {
 
     vel_ = (dt > 1e-6f) ? (pos_ - prev) * (1.0f / dt) : vec3(0.0f, 0.0f, 0.0f);
     obb_.center = pos_;
+    obb_.vel    = vel_;   // the ball's contact response uses the paddle's velocity
 }
 
 void Racket::append_local_tris(std::vector<bvh::Tri>& out) const {

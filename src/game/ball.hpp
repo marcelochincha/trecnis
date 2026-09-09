@@ -11,31 +11,38 @@
 //   vel    = vel / (1 + drag * |vel| * h)            (quadratic drag, implicit)
 //   spin   = spin / (1 + spin_decay * h)             (spin bleeds to the air)
 //   pos   += vel * h
-//   -> resolve arena walls/floor, then the static racket (Obb)
+//   -> resolve arena walls/floor, then the racket (Obb)
 //
 // The drag step is written in the semi-implicit form v /= (1 + k|v|h): the
 // factor is always in (0,1], so speed can only decrease and never overshoots or
 // flips sign — unconditionally stable, no CFL-style limit on h or |v|.
 //
-// A surface contact reflects the normal velocity and scales it by the
-// restitution e (|v_n'| = e|v_n|), so normal kinetic energy drops to e^2 per
-// contact. Contact is frictionless this phase: it does not change spin.
+// A contact applies the restitution e to the NORMAL component of the ball's
+// velocity RELATIVE to the surface: (v_rel . n) goes from vn_rel to -e*vn_rel.
+// For a stationary surface this is the usual |v_n'| = e|v_n| (normal kinetic
+// energy -> e^2). A racket moving into the ball raises the outgoing normal
+// speed to (1+e) times its approach; a racket pulling away softens the bounce.
+// Contact is frictionless this phase: it does not change spin, and only the
+// ball's normal component is touched (its tangential velocity is untouched).
 
 #include <math/sr_math.hpp>
 #include <core/sr_geometry.hpp>   // AABB
 
-// Oriented bounding box obstacle — pure math. The static racket produces one of
-// these and hands it to Ball::update; the ball resolves against it per sub-step
-// so it cannot tunnel through.
+// Oriented bounding box obstacle — pure math. The racket produces one of these
+// (its centre + velocity track the paddle) and hands it to Ball::update; the
+// ball resolves against it per sub-step so it cannot tunnel through.
 struct Obb {
     vec3  center      = vec3(0.0f, 0.0f, 0.0f);
     vec3  axis[3]     = { vec3(1,0,0), vec3(0,1,0), vec3(0,0,1) }; // orthonormal
     vec3  half        = vec3(0.5f, 0.5f, 0.5f);                     // half-extents
+    vec3  vel         = vec3(0.0f, 0.0f, 0.0f);                     // surface velocity
     float restitution = 0.85f;
 
     // Sphere (centre c, radius r) vs this box. On penetration: push c out along
-    // the contact normal and reflect the inbound normal velocity component of v
-    // (scaled by restitution). Returns true on contact.
+    // the contact normal (anti-tunneling) and update the ball's NORMAL velocity
+    // component using the ball-relative-to-surface normal speed and restitution
+    // (see the header comment). The surface is treated as infinite mass, so
+    // `vel` is unchanged. Returns true on contact.
     bool resolve(vec3& c, vec3& v, float r) const;
 };
 
@@ -53,7 +60,10 @@ struct Ball {
     float magnus      = 0.12f;   // Magnus coefficient: a += magnus * (spin x vel)
     float spin_decay  = 0.10f;   // 1/s, mild loss of spin to the air
 
-    long  racket_hits = 0;       // cumulative racket contacts (telemetry)
+    long  racket_hits      = 0;  // cumulative racket contacts (telemetry)
+    float hit_speed_in     = 0.0f;  // ball |v| just before the last racket contact
+    float hit_speed_out    = 0.0f;  // ball |v| just after
+    float hit_racket_speed = 0.0f;  // racket |v| at that contact
 
     // Advance by the real frame dt. `racket` may be null. Returns the number of
     // contacts this frame (rebounds; a settle onto the floor does not count).

@@ -244,24 +244,39 @@ void game_init(Game* e) {
     std::cout << "Dynamic: " << e->sphere_local_.size() << " sphere + "
               << e->racket_local_.size() << " racket tris\n"
               << "Racket: WASD / arrows move (X/Y), Q/E depth (Z)"
-              << (e->racket_autopilot ? "  [autopilot]" : "") << "\n"
+              << (e->racket_autopilot == 1 ? "  [auto: chase]"
+                  : e->racket_autopilot == 2 ? "  [auto: recede]" : "") << "\n"
               << "Renderer: " << e->renderer.count() << " backends, "
               << e->renderer.workers() << " workers, starting on '"
               << e->renderer.current_name() << "'\n";
 }
 
 // Player intent for the racket this frame: -1/0/+1 per axis from the existing
-// SDL keyboard state (WASD or arrows on X/Y, Q/E on Z). --racket-auto replaces
-// it with a scripted oscillation so headless tests are reproducible.
-static vec3 racket_input(Game* e, float dt) {
-    if (e->racket_autopilot) {
-        // Test affordance only: chase the ball in X/Y (per-axis intent, capped
-        // by racket_speed + limits) so a mid-air interception is demonstrable in
-        // headless runs. The real game input path below is untouched.
+// SDL keyboard state (WASD or arrows on X/Y, Q/E on Z). --racket-auto /
+// --racket-flee replace it with an automatic move so headless tests are
+// reproducible.
+static vec3 racket_input(Game* e, float /*dt*/) {
+    if (e->racket_autopilot != 0) {
+        // Test affordance only (headless runs). Both modes track the ball in Y.
+        //   mode 1 "chase":  close in on the ball in X       -> paddle moving into the ball
+        //   mode 2 "recede": give ground in X as it closes   -> paddle moving away at contact
+        // Per-axis intent, capped by racket_speed + limits. The real keyboard
+        // input path below is untouched.
         vec3 to_ball = e->ball.pos - e->racket.position();
         vec3 d(0.0f, 0.0f, 0.0f);
-        if (std::fabs(to_ball.x) > 0.05f) d.x = to_ball.x > 0.0f ? 1.0f : -1.0f;
         if (std::fabs(to_ball.y) > 0.05f) d.y = to_ball.y > 0.0f ? 1.0f : -1.0f;
+        if (e->racket_autopilot == 1) {
+            // chase: close in on the ball -> paddle moving INTO the ball
+            if (std::fabs(to_ball.x) > 0.05f) d.x = to_ball.x > 0.0f ? 1.0f : -1.0f;
+        } else {
+            // recede: keep aligned in Z, but stay ~1.6 u ahead of the ball in
+            // its X travel direction, so the paddle runs the same way the ball
+            // flies and is moving AWAY from it at contact.
+            if (std::fabs(to_ball.z) > 0.05f) d.z = to_ball.z > 0.0f ? 1.0f : -1.0f;
+            float lead = (e->ball.vel.x >= 0.0f) ? 1.6f : -1.6f;
+            float dx   = (e->ball.pos.x + lead) - e->racket.position().x;
+            if (std::fabs(dx) > 0.05f) d.x = dx > 0.0f ? 1.0f : -1.0f;
+        }
         return d;
     }
     const Uint8* k = SDL_GetKeyboardState(nullptr);
@@ -281,14 +296,24 @@ void game_update(Game* e, float dt) {
 
     // Ball::update consumes the real dt with an internal fixed physics sub-step,
     // so the trajectory is frame-rate independent (and it clamps a hitching dt
-    // itself — no spiral of death). The racket's velocity is NOT passed in: its
-    // motion does not add energy to the ball this checkpoint.
+    // itself — no spiral of death). The racket collider carries its velocity, so
+    // the ball's contact response depends on the ball-vs-racket relative motion.
     uint64_t tp = SDL_GetPerformanceCounter();
     e->bounces_total += e->ball.update(dt, e->arena, &e->racket.collider());
     refresh_dyn_tris(e);                           // in-place, no allocation
     e->sphere_mesh_.setPosition(e->ball.pos);      // raster mirrors follow
     e->racket_mesh_.setPosition(e->racket.position());
     e->metrics.physics_ms = Metrics::ema(e->metrics.physics_ms, ms_since(tp));
+
+    // One line per racket contact (--debug): incoming/outgoing ball speed and
+    // the racket speed at impact, to see the velocity transfer.
+    if (global_config.debug_mode && e->ball.racket_hits != e->hits_reported_) {
+        e->hits_reported_ = e->ball.racket_hits;
+        std::printf("[hit] racket #%ld  ball |v| %.2f -> %.2f  (dV %+.2f)  racket |v|=%.2f\n",
+                    e->ball.racket_hits, e->ball.hit_speed_in, e->ball.hit_speed_out,
+                    e->ball.hit_speed_out - e->ball.hit_speed_in, e->ball.hit_racket_speed);
+        std::fflush(stdout);
+    }
 
     // Frame order: update -> build dynamic BVH -> render.
     uint64_t tb = SDL_GetPerformanceCounter();
@@ -334,7 +359,7 @@ void game_render(Game* e, SDL_Texture* sdl_fb_texture, float dt) {
         vec3 rp = e->racket.position(), rv = e->racket.velocity();
         char hud[800];
         std::snprintf(hud, sizeof(hud),
-            "PingPong RT  -  movable racket + control\n"
+            "PingPong RT  -  racket velocity transfer\n"
             "Backend : %s%s   (TAB / G to cycle)\n"
             "FPS     : %.0f      Frame : %.2f ms\n"
             "Physics : %.3f ms   Dyn BVH build : %.3f ms\n"
@@ -345,6 +370,7 @@ void game_render(Game* e, SDL_Texture* sdl_fb_texture, float dt) {
             "Spin    : (%.1f, %.1f, %.1f) rad/s   |w| %.1f\n"
             "Model   : g %.2f  e %.2f  drag %.2f  magnus %.2f  (1/240 s)\n"
             "Racket  : p(%.1f, %.1f, %.1f)  v(%.1f, %.1f, %.1f)  hits: %ld%s\n"
+            "Impact  : ball |v| %.2f -> %.2f   racket |v| %.2f\n"
             "Move    : WASD / arrows = X/Y   Q/E = Z        [ESC] quit",
             e->renderer.current_name(),
             e->renderer.current_available() ? "" : " (n/a)",
@@ -357,7 +383,8 @@ void game_render(Game* e, SDL_Texture* sdl_fb_texture, float dt) {
             e->ball.spin.x, e->ball.spin.y, e->ball.spin.z, e->ball.spin_rate(),
             e->ball.gravity, e->ball.restitution, e->ball.drag, e->ball.magnus,
             rp.x, rp.y, rp.z, rv.x, rv.y, rv.z, e->ball.racket_hits,
-            e->racket_autopilot ? "  [auto]" : "");
+            e->racket_autopilot == 1 ? "  [chase]" : e->racket_autopilot == 2 ? "  [recede]" : "",
+            e->ball.hit_speed_in, e->ball.hit_speed_out, e->ball.hit_racket_speed);
 
         draw_text(e->fb, 11, 11, hud, 0xAA000000, 0xAA000000);
         draw_text(e->fb, 10, 10, hud, 0xFFFFFFFF);
@@ -402,6 +429,6 @@ void game_set_backend(Game* e, int index) {
                   << e->renderer.current_name() << "'\n";
 }
 
-void game_set_racket_autopilot(Game* e, bool on) {
-    e->racket_autopilot = on;
+void game_set_racket_autopilot(Game* e, int mode) {
+    e->racket_autopilot = mode;
 }

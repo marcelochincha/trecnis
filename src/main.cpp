@@ -51,12 +51,15 @@ int main(int argc, char* argv[])
     game_init(game);
 
     // Optional CLI: --backend <n> pins a backend for measurement;
-    // --racket-auto drives the racket on a scripted path for headless tests.
+    // --racket-auto / --racket-flee drive the racket toward / away from the ball
+    // for headless tests.
     for (int i = 1; i < argc; ++i) {
         if (i + 1 < argc && std::strcmp(argv[i], "--backend") == 0)
             game_set_backend(game, atoi(argv[i + 1]));
         else if (std::strcmp(argv[i], "--racket-auto") == 0)
-            game_set_racket_autopilot(game, true);
+            game_set_racket_autopilot(game, 1);
+        else if (std::strcmp(argv[i], "--racket-flee") == 0)
+            game_set_racket_autopilot(game, 2);
     }
 
     const float  target_delta_ms = 1000.0f / global_config.target_fps;

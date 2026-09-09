@@ -44,9 +44,17 @@ bool Obb::resolve(vec3& c, vec3& v, float r) const {
     // Positional correction: put the sphere just outside the surface.
     c = c + n * (r - dist);
 
-    // Velocity response: reflect only the component moving into the surface.
-    float vn = dot(v, n);
-    if (vn < 0.0f) v = v - n * ((1.0f + restitution) * vn);
+    // Velocity response about a possibly-MOVING surface. Apply restitution to
+    // the normal component of the ball velocity RELATIVE to the surface:
+    //   vn_rel = (v - vel) . n           (< 0 while the two approach)
+    //   vn_rel -> -restitution * vn_rel
+    //   => v -= n * (1 + restitution) * vn_rel
+    // The surface is infinite mass (kinematic racket): `vel` is unchanged and
+    // only the ball's normal component moves; its tangential velocity is left
+    // as is (frictionless). Stationary surface (vel == 0) reduces exactly to the
+    // previous |v_n'| = e|v_n| bounce.
+    float vn_rel = dot(v - vel, n);
+    if (vn_rel < 0.0f) v = v - n * ((1.0f + restitution) * vn_rel);
     return true;
 }
 
@@ -106,9 +114,19 @@ int Ball::step_fixed(float h, const AABB& b, const Obb* racket) {
         else                     vel.y = 0.0f;
     }
 
-    // Static racket (oriented box). Resolved per sub-step so the ball cannot
-    // tunnel through it.
-    if (racket && racket->resolve(pos, vel, radius)) { ++c; ++racket_hits; }
+    // Racket (oriented box, may be moving). Resolved per sub-step so the ball
+    // cannot tunnel through it; the response uses the ball-vs-racket relative
+    // normal velocity (Obb::resolve).
+    if (racket) {
+        float sp_before = magnitude(vel);
+        if (racket->resolve(pos, vel, radius)) {
+            ++c;
+            ++racket_hits;
+            hit_speed_in     = sp_before;
+            hit_speed_out    = magnitude(vel);
+            hit_racket_speed = magnitude(racket->vel);
+        }
+    }
 
     return c;
 }
