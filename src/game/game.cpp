@@ -135,11 +135,15 @@ void game_rebuild_static(Game* e) {
     const vec3 floor_col(0.35f, 0.37f, 0.40f);
 
     std::vector<bvh::Tri> tris;
-    tris.reserve(64);
+    tris.reserve(96);
     geom::add_box(tris, vec3(-4.0f, -0.10f, -4.0f), vec3(4.0f, 0.0f, 4.0f), floor_col, 0.85f); // floor
     geom::add_box(tris, vec3(-4.0f,  0.0f, -4.10f), vec3(4.0f, 6.0f, -4.0f), wall_col, 0.80f); // back
     geom::add_box(tris, vec3(-4.10f, 0.0f, -4.0f),  vec3(-4.0f, 6.0f, 4.0f), wall_col, 0.80f); // left
     geom::add_box(tris, vec3( 4.0f,  0.0f, -4.0f),  vec3(4.10f, 6.0f, 4.0f), wall_col, 0.80f); // right
+
+    // Static racket, folded into the SAME static set: it appears in every
+    // backend and lives in the static BVH with no extra plumbing.
+    e->racket.append_tris(tris);
 
     e->static_tri_count = tris.size();
 
@@ -153,9 +157,9 @@ void game_rebuild_static(Game* e) {
     e->emissive_tris.clear();   // none, but keep the pattern for later phases
     e->renderer.reload_scene(e->static_bvh, e->skybox_faces, e->emissive_tris);
 
-    std::cout << "Static arena: " << e->static_bvh.triangle_count() << " tris, "
-              << e->static_bvh.node_count() << " nodes, SAH build "
-              << e->static_build_ms << " ms\n";
+    std::cout << "Static: " << e->static_bvh.triangle_count() << " tris ("
+              << e->racket.tri_count() << " racket), " << e->static_bvh.node_count()
+              << " nodes, SAH build " << e->static_build_ms << " ms\n";
 }
 
 void game_init(Game* e) {
@@ -175,15 +179,20 @@ void game_init(Game* e) {
     e->ball.gravity     = 9.81f;
     e->ball.restitution = 0.75f;                 // normal KE -> e^2 = 0.56 per bounce
     e->ball.drag        = 0.10f;                 // quadratic air resistance
-    e->ball.magnus      = 0.12f;                 // Magnus strength
+    e->ball.magnus      = 0.10f;                 // Magnus strength
     e->ball.spin_decay  = 0.08f;                 // spin slowly fades in flight
-    // Start moving mostly +X with vel.z = 0, spinning about +Y: any drift in Z
-    // is then purely the Magnus deflection until the first wall bounce.
-    e->ball.pos         = vec3(-3.3f, 3.8f, 0.0f);
-    e->ball.vel         = vec3(4.5f, 1.5f, 0.0f);
-    e->ball.spin        = vec3(0.0f, 18.0f, 0.0f);   // sidespin, rad/s
+    e->ball.pos         = vec3(-3.3f, 3.9f, 0.2f);
+    e->ball.vel         = vec3(4.2f, 1.8f, 0.3f);
+    e->ball.spin        = vec3(0.0f, 14.0f, 0.0f);   // sidespin, rad/s
     e->arena.min        = vec3(-4.0f, 0.0f, -3.5f);
     e->arena.max        = vec3( 4.0f, 6.0f,  3.5f);
+
+    // --- static racket: a tilted paddle standing in the arena, in the path of
+    //     the bouncing ball. Static this checkpoint (no velocity transfer). ---
+    e->racket.configure(/*pos*/   vec3(-0.2f, 1.3f, -1.6f),
+                        /*euler*/ vec3(to_radians(0.0f), to_radians(-25.0f), 0.0f),
+                        /*size*/  vec3(2.4f, 2.4f, 0.32f),
+                        /*restitution*/ 0.85f);
 
     // --- sphere geometry: generate ONCE, centred at origin ---
     e->sphere_local_.clear();
@@ -222,7 +231,7 @@ void game_update(Game* e, float dt) {
     // so the trajectory is frame-rate independent (and it clamps a hitching dt
     // itself — no spiral of death).
     uint64_t tp = SDL_GetPerformanceCounter();
-    e->bounces_total += e->ball.update(dt, e->arena);
+    e->bounces_total += e->ball.update(dt, e->arena, &e->racket.collider());
     refresh_sphere_world(e, e->ball.pos);          // in-place, no allocation
     e->sphere_mesh_.setPosition(e->ball.pos);      // raster mirror follows
     e->metrics.physics_ms = Metrics::ema(e->metrics.physics_ms, ms_since(tp));
@@ -256,18 +265,19 @@ void game_render(Game* e, SDL_Texture* sdl_fb_texture, float dt) {
     if (global_config.debug_mode && elapsed >= next_log) {
         next_log += 2.0;
         std::printf("[perf] t=%5.1fs | fps %3.0f | frame %5.2f ms | physics %.3f | dynBVH %.3f | render %5.2f "
-                    "| ball(%.2f,%.2f,%.2f) |v|=%.2f spin=%.1f bounces %d\n",
+                    "| ball(%.2f,%.2f,%.2f) |v|=%.2f spin=%.1f bounces %d racket %ld\n",
                     elapsed, fps, m.frame_ms, m.physics_ms, m.dyn_build_ms, m.render_ms,
                     e->ball.pos.x, e->ball.pos.y, e->ball.pos.z,
-                    e->ball.speed(), e->ball.spin_rate(), e->bounces_total);
+                    e->ball.speed(), e->ball.spin_rate(), e->bounces_total, e->ball.racket_hits);
         std::fflush(stdout);
     }
 
     if (e->show_hud) {
 
-        char hud[720];
+        vec3 rn = e->racket.face_normal();
+        char hud[760];
         std::snprintf(hud, sizeof(hud),
-            "PingPong RT  -  ball physics: gravity + drag + spin + Magnus\n"
+            "PingPong RT  -  ball <-> static racket\n"
             "Backend : %s%s   (TAB / G to cycle)\n"
             "FPS     : %.0f      Frame : %.2f ms\n"
             "Physics : %.3f ms   Dyn BVH build : %.3f ms\n"
@@ -277,6 +287,7 @@ void game_render(Game* e, SDL_Texture* sdl_fb_texture, float dt) {
             "Ball    : p(%.1f, %.1f, %.1f)  speed %.2f  bounces: %d\n"
             "Spin    : (%.1f, %.1f, %.1f) rad/s   |w| %.1f\n"
             "Model   : g %.2f  e %.2f  drag %.2f  magnus %.2f  (1/240 s)\n"
+            "Racket  : p(%.1f, %.1f, %.1f)  n(%.2f,%.2f,%.2f)  hits: %ld\n"
             "[ESC] quit",
             e->renderer.current_name(),
             e->renderer.current_available() ? "" : " (n/a)",
@@ -287,7 +298,9 @@ void game_render(Game* e, SDL_Texture* sdl_fb_texture, float dt) {
             m.primary_rays,
             e->ball.pos.x, e->ball.pos.y, e->ball.pos.z, e->ball.speed(), e->bounces_total,
             e->ball.spin.x, e->ball.spin.y, e->ball.spin.z, e->ball.spin_rate(),
-            e->ball.gravity, e->ball.restitution, e->ball.drag, e->ball.magnus);
+            e->ball.gravity, e->ball.restitution, e->ball.drag, e->ball.magnus,
+            e->racket.position().x, e->racket.position().y, e->racket.position().z,
+            rn.x, rn.y, rn.z, e->ball.racket_hits);
 
         draw_text(e->fb, 11, 11, hud, 0xAA000000, 0xAA000000);
         draw_text(e->fb, 10, 10, hud, 0xFFFFFFFF);

@@ -5,19 +5,68 @@
 static constexpr float kFixedStep  = 1.0f / 240.0f;   // physics sub-step (s)
 static constexpr float kMaxCatchUp = 0.25f;           // clamp: avoid spiral of death
 
-int Ball::update(float dt, const AABB& b) {
+// ---------------------------------------------------------------------------
+// Obb: sphere vs oriented box
+// ---------------------------------------------------------------------------
+
+bool Obb::resolve(vec3& c, vec3& v, float r) const {
+    // Sphere centre relative to the box, projected onto the box axes.
+    vec3  d  = c - center;
+    float lx = dot(d, axis[0]);
+    float ly = dot(d, axis[1]);
+    float lz = dot(d, axis[2]);
+
+    // Closest point of the box to the sphere centre (clamp to the slab widths).
+    float qx = std::clamp(lx, -half.x, half.x);
+    float qy = std::clamp(ly, -half.y, half.y);
+    float qz = std::clamp(lz, -half.z, half.z);
+    vec3  closest = center + axis[0] * qx + axis[1] * qy + axis[2] * qz;
+
+    vec3  delta = c - closest;
+    float dist2 = dot(delta, delta);
+    if (dist2 >= r * r) return false;                 // no contact
+
+    vec3  n;
+    float dist = std::sqrt(dist2);
+    if (dist > 1e-6f) {
+        n = delta / dist;                            // centre is outside the box
+    } else {
+        // Centre inside the box: eject along the least-penetrated face.
+        float px = half.x - std::fabs(lx);
+        float py = half.y - std::fabs(ly);
+        float pz = half.z - std::fabs(lz);
+        if      (px <= py && px <= pz) n = axis[0] * (lx < 0.0f ? -1.0f : 1.0f);
+        else if (py <= pz)             n = axis[1] * (ly < 0.0f ? -1.0f : 1.0f);
+        else                           n = axis[2] * (lz < 0.0f ? -1.0f : 1.0f);
+        dist = 0.0f;
+    }
+
+    // Positional correction: put the sphere just outside the surface.
+    c = c + n * (r - dist);
+
+    // Velocity response: reflect only the component moving into the surface.
+    float vn = dot(v, n);
+    if (vn < 0.0f) v = v - n * ((1.0f + restitution) * vn);
+    return true;
+}
+
+// ---------------------------------------------------------------------------
+// Ball integration
+// ---------------------------------------------------------------------------
+
+int Ball::update(float dt, const AABB& b, const Obb* racket) {
     if (dt < 0.0f) dt = 0.0f;
     accum_ += std::min(dt, kMaxCatchUp);
 
     int contacts = 0;
     while (accum_ >= kFixedStep) {
-        contacts += step_fixed(kFixedStep, b);
+        contacts += step_fixed(kFixedStep, b, racket);
         accum_   -= kFixedStep;
     }
     return contacts;
 }
 
-int Ball::step_fixed(float h, const AABB& b) {
+int Ball::step_fixed(float h, const AABB& b, const Obb* racket) {
     // --- forces -> acceleration (gravity + Magnus), then velocity ---
     // Magnus is perpendicular to vel, so it curves the path without adding speed.
     vec3 a = vec3(0.0f, -gravity, 0.0f) + magnus * cross(spin, vel);
@@ -34,7 +83,7 @@ int Ball::step_fixed(float h, const AABB& b) {
 
     pos = pos + vel * h;
 
-    // --- collisions: gravity + restitution, unchanged from checkpoint 11ae276 ---
+    // --- collisions ---
     int c = 0;
 
     // Side walls (X).
@@ -56,6 +105,10 @@ int Ball::step_fixed(float h, const AABB& b) {
         if (v_in > rest_speed) { vel.y = v_in * restitution; ++c; }
         else                     vel.y = 0.0f;
     }
+
+    // Static racket (oriented box). Resolved per sub-step so the ball cannot
+    // tunnel through it.
+    if (racket && racket->resolve(pos, vel, radius)) { ++c; ++racket_hits; }
 
     return c;
 }

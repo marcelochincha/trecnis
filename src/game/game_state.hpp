@@ -1,11 +1,12 @@
 #pragma once
 // Internal header — included only by game/ sub-modules, never by render/.
 //
-// Checkpoint scene: a static box arena (floor + 3 walls) in the STATIC BVH and
-// one ray-traced sphere in the DYNAMIC BVH. The ball flies under gravity + air
-// drag + the Magnus effect (from its angular velocity) and bounces off the arena
-// with a restitution coefficient, integrated frame-rate independently with a
-// fixed sub-step. No player, racket, contact friction, score.
+// Checkpoint scene: a static box arena (floor + 3 walls) + a static racket
+// (tilted paddle) in the STATIC BVH, and one ray-traced sphere in the DYNAMIC
+// BVH. The ball flies under gravity + air drag + Magnus and bounces off the
+// arena and the racket with a restitution coefficient, integrated frame-rate
+// independently with a fixed sub-step. The racket does not move yet: no velocity
+// transfer, no contact friction / impact spin. No player, score, AI.
 
 #include <SDL2/SDL.h>
 #include <vector>
@@ -21,6 +22,7 @@
 #include <render/raytrace/bvh.hpp>       // bvh::BVH, bvh::Tri, bvh::BuildStrategy
 
 #include <game/ball.hpp>
+#include <game/racket.hpp>
 
 // game/ deliberately does NOT include sr_raytrace.hpp / sr_ocl.hpp /
 // cpu_tracer.hpp. The seam to render/ is RenderScene + Renderer + bvh.hpp only.
@@ -67,9 +69,10 @@ struct Game {
     vec3                 sphere_albedo = vec3(0.90f, 0.30f, 0.20f);
 
     // --- physics state -----------------------------------------------------
-    Ball ball;
-    AABB arena;                                 // ball centre stays inside this
-    int  bounces_total = 0;
+    Ball   ball;
+    Racket racket;                              // static paddle (folded into static BVH)
+    AABB   arena;                               // ball centre stays inside this
+    int    bounces_total = 0;
 
     // --- per-frame draw list for the raster backend ----------------------
     std::vector<RasterItem> raster_items;
