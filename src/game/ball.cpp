@@ -18,13 +18,26 @@ int Ball::update(float dt, const AABB& b) {
 }
 
 int Ball::step_fixed(float h, const AABB& b) {
-    // Semi-implicit (symplectic) Euler: integrate velocity, then position.
-    vel.y -= gravity * h;
-    pos    = pos + vel * h;
+    // --- forces -> acceleration (gravity + Magnus), then velocity ---
+    // Magnus is perpendicular to vel, so it curves the path without adding speed.
+    vec3 a = vec3(0.0f, -gravity, 0.0f) + magnus * cross(spin, vel);
+    vel = vel + a * h;
 
+    // Quadratic aerodynamic drag, semi-implicit: v /= (1 + k|v|h). The factor is
+    // always in (0,1] -> speed only decreases, never overshoots (unconditionally
+    // stable, no limit on h or |v|).
+    float sp = magnitude(vel);
+    if (sp > 1e-6f) vel = vel / (1.0f + drag * sp * h);
+
+    // Spin slowly bleeds to the air (no contact friction this phase).
+    if (spin_decay > 0.0f) spin = spin / (1.0f + spin_decay * h);
+
+    pos = pos + vel * h;
+
+    // --- collisions: gravity + restitution, unchanged from checkpoint 11ae276 ---
     int c = 0;
 
-    // Side walls (X) — existing walls, now with restitution.
+    // Side walls (X).
     if (pos.x - radius < b.min.x)      { pos.x = b.min.x + radius; vel.x = -vel.x * restitution; ++c; }
     else if (pos.x + radius > b.max.x) { pos.x = b.max.x - radius; vel.x = -vel.x * restitution; ++c; }
 

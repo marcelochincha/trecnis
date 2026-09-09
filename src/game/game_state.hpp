@@ -2,9 +2,10 @@
 // Internal header — included only by game/ sub-modules, never by render/.
 //
 // Checkpoint scene: a static box arena (floor + 3 walls) in the STATIC BVH and
-// one ray-traced sphere in the DYNAMIC BVH. The ball falls under gravity and
-// bounces off the arena with a restitution coefficient (energy loss per bounce),
-// integrated frame-rate independently. No player, racket, spin, Magnus, score.
+// one ray-traced sphere in the DYNAMIC BVH. The ball flies under gravity + air
+// drag + the Magnus effect (from its angular velocity) and bounces off the arena
+// with a restitution coefficient, integrated frame-rate independently with a
+// fixed sub-step. No player, racket, contact friction, score.
 
 #include <SDL2/SDL.h>
 #include <vector>

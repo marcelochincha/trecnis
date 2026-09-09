@@ -174,8 +174,14 @@ void game_init(Game* e) {
     e->ball.radius      = 0.5f;
     e->ball.gravity     = 9.81f;
     e->ball.restitution = 0.75f;                 // normal KE -> e^2 = 0.56 per bounce
-    e->ball.pos         = vec3(-3.0f, 5.2f, 0.4f);
-    e->ball.vel         = vec3(3.0f, 0.5f, -0.7f);
+    e->ball.drag        = 0.10f;                 // quadratic air resistance
+    e->ball.magnus      = 0.12f;                 // Magnus strength
+    e->ball.spin_decay  = 0.08f;                 // spin slowly fades in flight
+    // Start moving mostly +X with vel.z = 0, spinning about +Y: any drift in Z
+    // is then purely the Magnus deflection until the first wall bounce.
+    e->ball.pos         = vec3(-3.3f, 3.8f, 0.0f);
+    e->ball.vel         = vec3(4.5f, 1.5f, 0.0f);
+    e->ball.spin        = vec3(0.0f, 18.0f, 0.0f);   // sidespin, rad/s
     e->arena.min        = vec3(-4.0f, 0.0f, -3.5f);
     e->arena.max        = vec3( 4.0f, 6.0f,  3.5f);
 
@@ -250,18 +256,18 @@ void game_render(Game* e, SDL_Texture* sdl_fb_texture, float dt) {
     if (global_config.debug_mode && elapsed >= next_log) {
         next_log += 2.0;
         std::printf("[perf] t=%5.1fs | fps %3.0f | frame %5.2f ms | physics %.3f | dynBVH %.3f | render %5.2f "
-                    "| tris %zu | rays %zu | ball(%.2f,%.2f,%.2f) |v|=%.2f bounces %d\n",
+                    "| ball(%.2f,%.2f,%.2f) |v|=%.2f spin=%.1f bounces %d\n",
                     elapsed, fps, m.frame_ms, m.physics_ms, m.dyn_build_ms, m.render_ms,
-                    tris, m.primary_rays,
-                    e->ball.pos.x, e->ball.pos.y, e->ball.pos.z, e->ball.speed(), e->bounces_total);
+                    e->ball.pos.x, e->ball.pos.y, e->ball.pos.z,
+                    e->ball.speed(), e->ball.spin_rate(), e->bounces_total);
         std::fflush(stdout);
     }
 
     if (e->show_hud) {
 
-        char hud[640];
+        char hud[720];
         std::snprintf(hud, sizeof(hud),
-            "PingPong RT  -  ball physics: gravity + restitution\n"
+            "PingPong RT  -  ball physics: gravity + drag + spin + Magnus\n"
             "Backend : %s%s   (TAB / G to cycle)\n"
             "FPS     : %.0f      Frame : %.2f ms\n"
             "Physics : %.3f ms   Dyn BVH build : %.3f ms\n"
@@ -269,7 +275,8 @@ void game_render(Game* e, SDL_Texture* sdl_fb_texture, float dt) {
             "Tris    : %zu static + %zu dynamic = %zu\n"
             "Rays    : %zu primary / frame\n"
             "Ball    : p(%.1f, %.1f, %.1f)  speed %.2f  bounces: %d\n"
-            "Physics : g %.2f   e %.2f  (sub-step 1/240 s)\n"
+            "Spin    : (%.1f, %.1f, %.1f) rad/s   |w| %.1f\n"
+            "Model   : g %.2f  e %.2f  drag %.2f  magnus %.2f  (1/240 s)\n"
             "[ESC] quit",
             e->renderer.current_name(),
             e->renderer.current_available() ? "" : " (n/a)",
@@ -279,7 +286,8 @@ void game_render(Game* e, SDL_Texture* sdl_fb_texture, float dt) {
             e->static_bvh.triangle_count(), e->dynamic_bvh.triangle_count(), tris,
             m.primary_rays,
             e->ball.pos.x, e->ball.pos.y, e->ball.pos.z, e->ball.speed(), e->bounces_total,
-            e->ball.gravity, e->ball.restitution);
+            e->ball.spin.x, e->ball.spin.y, e->ball.spin.z, e->ball.spin_rate(),
+            e->ball.gravity, e->ball.restitution, e->ball.drag, e->ball.magnus);
 
         draw_text(e->fb, 11, 11, hud, 0xAA000000, 0xAA000000);
         draw_text(e->fb, 10, 10, hud, 0xFFFFFFFF);
