@@ -134,7 +134,9 @@ static RenderScene make_render_scene(Game* e) {
 // Technical Progress / Physics Evolution demo
 // ---------------------------------------------------------------------------
 
-static const vec3 kRacketHome(0.0f, 2.9f, 0.6f);
+// Just behind the table's near edge (half_len 1.37), at paddle height above
+// the surface -- the player's side, where the character placeholder stands.
+static const vec3 kRacketHome(0.0f, 0.95f, -1.55f);
 
 // Descriptions shown in the demo panel (index 0 = stage 1).
 static const char* kStageTitle[4] = {
@@ -193,9 +195,14 @@ static void apply_demo_stage(Game* e, int stage) {
         default:
             b.gravity = 9.81f; b.drag = 0.10f; b.magnus = 0.10f;
             b.restitution = 0.75f;
-            // Serve from the near half (z < 0) of the table, arcing over the
-            // net (z = 0) with clearance, landing on the far half (z > 0).
-            b.reset(vec3(0.0f, 2.0f, -1.05f), vec3(0.0f, 0.8f, 2.8f), vec3(8.0f, 0.0f, 0.0f));
+            // Serve from the player's side (z < 0, near the racket/character),
+            // arcing over the net (z = 0) with clearance, landing on the far
+            // half and continuing toward the backdrop wall. Lower and flatter
+            // than the previous checkpoint's launch (was y=2.0, a floaty lob
+            // unrelated to the racket/character height) -- only the initial
+            // position/velocity/spin changed here, Ball::step_fixed itself
+            // (gravity/drag/spin/Magnus/restitution) is untouched.
+            b.reset(vec3(0.0f, 1.5f, -1.0f), vec3(0.0f, 0.9f, 3.0f), vec3(6.0f, 0.0f, 0.0f));
             e->racket_enabled = true;
             e->table_enabled  = true;
             break;
@@ -216,25 +223,41 @@ Game* game_create(int width, int height) {
 void game_rebuild_static(Game* e) {
     uint64_t t0 = SDL_GetPerformanceCounter();
 
-    // Box arena: floor + back + left + right walls (front + ceiling stay open
-    // as invisible reflection planes). Thin boxes, outward normals.
+    // Open scene, not a closed arena: a floor for context/shadows, the table,
+    // and ONE backdrop wall behind the far end of the table (+Z, the ball's
+    // travel direction) -- no side walls, no ceiling, so the table stays the
+    // visual centrepiece instead of a box around it.
     const vec3 wall_col(0.58f, 0.58f, 0.62f);
     const vec3 floor_col(0.35f, 0.37f, 0.40f);
+    const vec3 shirt_col(0.20f, 0.35f, 0.55f);
+    const vec3 pants_col(0.15f, 0.15f, 0.18f);
+    const vec3 skin_col (0.80f, 0.62f, 0.50f);
 
     std::vector<bvh::Tri> tris;
-    tris.reserve(96);
-    geom::add_box(tris, vec3(-4.0f, -0.10f, -4.0f), vec3(4.0f, 0.0f, 4.0f), floor_col, 0.85f); // floor
-    geom::add_box(tris, vec3(-4.0f,  0.0f, -4.10f), vec3(4.0f, 6.0f, -4.0f), wall_col, 0.80f); // back
-    geom::add_box(tris, vec3(-4.10f, 0.0f, -4.0f),  vec3(-4.0f, 6.0f, 4.0f), wall_col, 0.80f); // left
-    geom::add_box(tris, vec3( 4.0f,  0.0f, -4.0f),  vec3(4.10f, 6.0f, 4.0f), wall_col, 0.80f); // right
+    tris.reserve(160);
+    geom::add_box(tris, vec3(-3.0f, -0.10f, -2.8f), vec3(3.0f, 0.0f, 2.6f), floor_col, 0.85f); // floor
+
+    // Backdrop wall, just past the table's far edge, aligned with the ball's
+    // primary launch direction. Visual only this checkpoint -- no physics
+    // collider yet (that is a later checkpoint).
+    const float wall_z = e->table.half_len + 0.9f;
+    geom::add_box(tris, vec3(-2.4f, 0.0f, wall_z), vec3(2.4f, 2.4f, wall_z + 0.10f), wall_col, 0.80f);
 
     // Regulation table (surface + edge lines + net + legs), centred at the
-    // arena origin. Dimensions come from e->table so the visual mesh and the
+    // scene origin. Dimensions come from e->table so the visual mesh and the
     // ball's surface collider (Table::resolve) can never drift apart.
     e->table.append_tris(tris);
 
+    // Player character: a simple blocky placeholder (legs + torso + head, no
+    // skinning/animation) standing on the near side, behind the racket, so
+    // the composition reads as a table-tennis scene rather than an empty
+    // paddle floating in space.
+    geom::add_box(tris, vec3(-0.14f, 0.0f,  -2.16f), vec3(0.14f, 0.90f, -1.94f), pants_col, 0.60f); // legs
+    geom::add_box(tris, vec3(-0.18f, 0.90f, -2.18f), vec3(0.18f, 1.55f, -1.92f), shirt_col, 0.55f); // torso
+    geom::add_box(tris, vec3(-0.10f, 1.55f, -2.15f), vec3(0.10f, 1.75f, -1.95f), skin_col,  0.50f); // head
+
     // The racket is dynamic now (movable) -> it lives in the DYNAMIC BVH, not
-    // here. Only the immovable arena + table are static.
+    // here. Only the immovable floor + wall + table + character are static.
     e->static_tri_count = tris.size();
 
     delete e->court_mesh;
@@ -264,21 +287,25 @@ void game_init(Game* e) {
     load_png_texture("res/textures/skybox3/null_plainsky512_up.png", e->skybox_faces[4]);
     load_png_texture("res/textures/skybox3/null_plainsky512_dn.png", e->skybox_faces[5]);
 
-    // --- arena ---
+    // --- arena (invisible physics bound; the visible walls are gone) ---
+    // Z max is pushed well past the backdrop wall (table.half_len + 0.9) so
+    // the ball's forward flight is never reflected back by this bound -- the
+    // wall itself has no collider yet (visual only this checkpoint).
     e->arena.min = vec3(-4.0f, 0.0f, -3.5f);
-    e->arena.max = vec3( 4.0f, 6.0f,  3.5f);
+    e->arena.max = vec3( 4.0f, 6.0f, 12.0f);
 
     // --- movable racket: a paddle the player translates. Orientation and size
-    //     are fixed; only the position moves (step()). Faced nearly toward the
-    //     camera (small yaw + slight upward pitch) so its face is clearly
-    //     visible, centred and a bit forward. ---
+    //     are fixed; only the position moves (step()). Table-tennis-paddle
+    //     scale (was oversized at 1.8 units -- comically large next to the
+    //     0.06-radius ball), held at the player's side just behind the
+    //     table's near edge. ---
     e->racket.configure(/*pos*/   kRacketHome,
                         /*euler*/ vec3(to_radians(8.0f), to_radians(-6.0f), 0.0f),
-                        /*size*/  vec3(1.8f, 1.8f, 0.28f),
+                        /*size*/  vec3(0.32f, 0.34f, 0.03f),
                         /*restitution*/ 0.85f);
     e->racket_speed     = 5.0f;
-    e->racket_limits.min = vec3(-2.6f, 2.0f, -2.6f);   // paddle stays in the flight zone,
-    e->racket_limits.max = vec3( 2.6f, 4.0f,  2.4f);   // clear of walls and the floor
+    e->racket_limits.min = vec3(-1.0f, 0.70f, -1.90f);   // stays near the player's side of
+    e->racket_limits.max = vec3( 1.0f, 1.30f, -1.20f);   // the table, clear of the floor
 
     // --- ball: seed with the full-game (stage 4) feature set ---
     apply_demo_stage(e, 4);
