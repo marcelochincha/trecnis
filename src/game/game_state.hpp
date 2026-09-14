@@ -1,7 +1,9 @@
 #pragma once
 // Internal header — included only by game/ sub-modules, never by render/.
 //
-// Checkpoint scene: a static box arena (floor + 3 walls) in the STATIC BVH, and
+// Checkpoint scene: a static box arena (floor + 3 walls) plus a regulation
+// table (surface + lines + net + legs, visual only for the net) in the
+// STATIC BVH, and
 // in the DYNAMIC BVH a ray-traced sphere plus a user-movable racket (tilted
 // paddle). The ball flies under gravity + air drag + Magnus and bounces off the
 // arena and the racket with a restitution coefficient, integrated frame-rate
@@ -25,6 +27,7 @@
 
 #include <game/ball.hpp>
 #include <game/racket.hpp>
+#include <game/table.hpp>
 
 // game/ deliberately does NOT include sr_raytrace.hpp / sr_ocl.hpp /
 // cpu_tracer.hpp. The seam to render/ is RenderScene + Renderer + bvh.hpp only.
@@ -76,12 +79,14 @@ struct Game {
     // --- physics state -----------------------------------------------------
     Ball   ball;
     Racket racket;                              // user-movable paddle (dynamic BVH)
+    Table  table;                               // regulation dims; static geometry + ball collider
     AABB   arena;                               // ball centre stays inside this
     AABB   racket_limits;                       // racket centre stays inside this
     float  racket_speed = 5.0f;                 // u/s, player move speed
     int    racket_autopilot = 0;                // 0 = keyboard, 1 = chase ball, 2 = recede (headless tests)
     long   hits_reported_ = 0;                  // last racket-hit count logged
     bool   racket_enabled = true;               // demo stages 1-3 hide/disable the racket
+    bool   table_enabled  = true;               // demo stages 1-3 disable the table collider too
     int    bounces_total = 0;
 
     // --- Technical Progress / Physics Evolution demo (T) ------------------

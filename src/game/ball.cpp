@@ -62,19 +62,19 @@ bool Obb::resolve(vec3& c, vec3& v, float r) const {
 // Ball integration
 // ---------------------------------------------------------------------------
 
-int Ball::update(float dt, const AABB& b, const Obb* racket) {
+int Ball::update(float dt, const AABB& b, const Obb* racket, const Table* table) {
     if (dt < 0.0f) dt = 0.0f;
     accum_ += std::min(dt, kMaxCatchUp);
 
     int contacts = 0;
     while (accum_ >= kFixedStep) {
-        contacts += step_fixed(kFixedStep, b, racket);
+        contacts += step_fixed(kFixedStep, b, racket, table);
         accum_   -= kFixedStep;
     }
     return contacts;
 }
 
-int Ball::step_fixed(float h, const AABB& b, const Obb* racket) {
+int Ball::step_fixed(float h, const AABB& b, const Obb* racket, const Table* table) {
     // --- forces -> acceleration (gravity + Magnus), then velocity ---
     // Magnus is perpendicular to vel, so it curves the path without adding speed.
     vec3 a = vec3(0.0f, -gravity, 0.0f) + magnus * cross(spin, vel);
@@ -89,6 +89,7 @@ int Ball::step_fixed(float h, const AABB& b, const Obb* racket) {
     // Spin slowly bleeds to the air (no contact friction this phase).
     if (spin_decay > 0.0f) spin = spin / (1.0f + spin_decay * h);
 
+    const float prev_y = pos.y;   // table needs this: only a top-down arrival counts
     pos = pos + vel * h;
 
     // --- collisions ---
@@ -104,6 +105,10 @@ int Ball::step_fixed(float h, const AABB& b, const Obb* racket) {
 
     // Ceiling (Y max).
     if (pos.y + radius > b.max.y)      { pos.y = b.max.y - radius; vel.y = -vel.y * restitution; ++c; }
+
+    // Table surface (only inside its footprint; a no-op elsewhere, so the ball
+    // still falls through to the room floor below once it clears the table).
+    if (table && table->resolve(prev_y, pos, vel, radius, restitution, rest_speed)) ++c;
 
     // Floor / table (Y min): reflect with restitution, or settle to rest once
     // the rebound would be negligible (normal kinetic energy fully dissipated).

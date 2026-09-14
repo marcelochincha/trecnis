@@ -157,7 +157,12 @@ static const char* kStageBlurb[4] = {
 static void apply_demo_stage(Game* e, int stage) {
     e->demo_stage = std::clamp(stage, 1, 4);
     Ball& b = e->ball;
-    b.radius     = 0.5f;
+    // Regulation-table scale. The sphere's BVH/raster geometry is generated
+    // ONCE in game_init from whatever radius is active at that moment and
+    // never rebuilt (see sphere_local_), so every stage MUST share one
+    // radius here — otherwise a stage switch would desync the visible
+    // sphere size from its (now different) collision radius.
+    b.radius     = 0.06f;
     b.spin_decay = 0.08f;
     b.rest_speed = 0.5f;
 
@@ -167,25 +172,32 @@ static void apply_demo_stage(Game* e, int stage) {
             b.restitution = 1.0f;  b.rest_speed = 0.0f;      // never settle
             b.reset(vec3(-2.0f, 3.2f, 0.0f), vec3(3.4f, 2.4f, 1.7f), vec3(0.0f, 0.0f, 0.0f));
             e->racket_enabled = false;
+            e->table_enabled  = false;
             break;
         case 2:  // gravity + restitution
             b.gravity = 9.81f; b.drag = 0.0f;  b.magnus = 0.0f;
             b.restitution = 0.75f;
             b.reset(vec3(-1.5f, 5.2f, 0.0f), vec3(2.6f, 0.4f, 0.5f), vec3(0.0f, 0.0f, 0.0f));
             e->racket_enabled = false;
+            e->table_enabled  = false;
             break;
         case 3:  // + drag + spin + Magnus
             b.gravity = 9.81f; b.drag = 0.10f; b.magnus = 0.10f;
             b.restitution = 0.75f;
             b.reset(vec3(-3.4f, 3.8f, 0.2f), vec3(3.4f, 0.8f, 0.0f), vec3(0.0f, 20.0f, 0.0f));
             e->racket_enabled = false;
+            e->table_enabled  = false;
             break;
-        case 4:  // full current game
+        case 4:  // full current game: ball crosses the table net under gravity +
+                 // drag + spin + Magnus, lands on the far half and bounces.
         default:
             b.gravity = 9.81f; b.drag = 0.10f; b.magnus = 0.10f;
             b.restitution = 0.75f;
-            b.reset(vec3(-3.2f, 2.5f, 0.7f), vec3(4.0f, 4.0f, 1.4f), vec3(0.0f, 14.0f, 0.0f));
+            // Serve from the near half (z < 0) of the table, arcing over the
+            // net (z = 0) with clearance, landing on the far half (z > 0).
+            b.reset(vec3(0.0f, 2.0f, -1.05f), vec3(0.0f, 0.8f, 2.8f), vec3(8.0f, 0.0f, 0.0f));
             e->racket_enabled = true;
+            e->table_enabled  = true;
             break;
     }
     e->racket.recenter(kRacketHome);
@@ -216,8 +228,13 @@ void game_rebuild_static(Game* e) {
     geom::add_box(tris, vec3(-4.10f, 0.0f, -4.0f),  vec3(-4.0f, 6.0f, 4.0f), wall_col, 0.80f); // left
     geom::add_box(tris, vec3( 4.0f,  0.0f, -4.0f),  vec3(4.10f, 6.0f, 4.0f), wall_col, 0.80f); // right
 
+    // Regulation table (surface + edge lines + net + legs), centred at the
+    // arena origin. Dimensions come from e->table so the visual mesh and the
+    // ball's surface collider (Table::resolve) can never drift apart.
+    e->table.append_tris(tris);
+
     // The racket is dynamic now (movable) -> it lives in the DYNAMIC BVH, not
-    // here. Only the immovable arena is static.
+    // here. Only the immovable arena + table are static.
     e->static_tri_count = tris.size();
 
     delete e->court_mesh;
@@ -365,7 +382,8 @@ void game_update(Game* e, float dt) {
     // the ball's contact response depends on the ball-vs-racket relative motion.
     uint64_t tp = SDL_GetPerformanceCounter();
     e->bounces_total += e->ball.update(dt, e->arena,
-                                       e->racket_enabled ? &e->racket.collider() : nullptr);
+                                       e->racket_enabled ? &e->racket.collider() : nullptr,
+                                       e->table_enabled  ? &e->table            : nullptr);
     refresh_dyn_tris(e);                           // in-place, no allocation
     e->sphere_mesh_.setPosition(e->ball.pos);      // raster mirrors follow
     e->racket_mesh_.setPosition(e->racket.position());
