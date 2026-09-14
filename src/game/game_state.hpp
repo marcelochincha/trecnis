@@ -50,14 +50,19 @@ struct Game {
     framebuffer fb;
     camera      cam;
 
-    // Fixed camera (no free-fly): behind and slightly above the player's
-    // side, looking down the length of the table toward the net and the
-    // backdrop wall -- table/net/ball/racket/character/wall all in frame,
-    // with the (closer) table given more visual weight than the (further)
-    // wall. Checked against the scene's Z placements: player ~z=-1.55..-2.2,
-    // table z=[-1.37,1.37], wall z~=2.27.
-    vec3 cam_pos    = vec3(0.0f, 1.6f, -4.2f);
-    vec3 cam_target = vec3(0.0f, 0.9f, 1.0f);
+    // Camera: diagonal/elevated starting view (off to one side, not directly
+    // behind the racket, so the table/racket don't block the ball) -- table,
+    // net, player, racket and backdrop wall all in frame with margin, table
+    // still the dominant element. cam_pos/cam_yaw/cam_pitch are the LIVE
+    // per-frame state (see update_camera in game.cpp); cam_target is used
+    // only once at startup, to derive the initial yaw/pitch. Toggle C for
+    // free-fly (mouse-look + WASD/Q/E); WASD/Q/E drive the racket otherwise.
+    vec3  cam_pos    = vec3(3.0f, 2.1f, -3.4f);
+    vec3  cam_target = vec3(0.0f, 0.85f, 0.6f);
+    float cam_yaw    = 0.0f;    // radians; seeded from cam_pos/cam_target in game_init
+    float cam_pitch  = 0.0f;
+    float cam_move_speed = 3.0f;   // u/s, free-fly speed (mouse wheel adjusts)
+    bool  free_cam   = false;      // false = fixed diagonal view, racket owns WASD/Q/E
 
     // --- STATIC geometry: floor + back / left / right walls -------------------
     bvh::BVH           static_bvh;

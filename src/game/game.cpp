@@ -57,14 +57,56 @@ static void fill_raster_mesh(mesh& m, const std::vector<bvh::Tri>& tris) {
     m._modelMatrixDirty = true;
 }
 
-// Point the fixed camera from cam_pos towards cam_target (engine euler
-// convention: yaw about +Y, pitch about +X, forward = -Z).
+// Seed the camera's live yaw/pitch (e->cam_yaw/cam_pitch) from cam_pos/
+// cam_target at startup (engine euler convention: yaw about +Y, pitch about
+// +X, forward = -Z), and push that initial state to the camera. Every frame
+// afterwards, update_camera() re-applies e->cam_pos/cam_yaw/cam_pitch --
+// this function only runs once, in game_init.
 static void set_fixed_view(Game* e) {
-    vec3  d     = normalize(e->cam_target - e->cam_pos);
-    float pitch = std::asin(std::clamp(d.y, -1.0f, 1.0f));
-    float yaw   = std::atan2(d.x, -d.z);
+    vec3 d = normalize(e->cam_target - e->cam_pos);
+    e->cam_pitch = std::asin(std::clamp(d.y, -1.0f, 1.0f));
+    e->cam_yaw   = std::atan2(d.x, -d.z);
     e->cam.setPosition(e->cam_pos);
-    e->cam.setRotation(vec3(pitch, yaw, 0.0f));
+    e->cam.setRotation(vec3(e->cam_pitch, e->cam_yaw, 0.0f));
+}
+
+static constexpr float kMouseSensitivity = 0.0025f;   // rad per relative pixel
+static constexpr float kMaxCamPitch      = 1.4834f;   // ~85 degrees
+
+// Free-fly camera, active only while e->free_cam is set (toggle: C). Adapted
+// from the base engine's free-fly control (trecnis src/game/sr_game.cpp) to
+// this project's `camera` type, which has no built-in fly controller of its
+// own -- it just takes a position + (pitch,yaw,roll) each frame, so the game
+// layer owns the running yaw/pitch/position state (e->cam_yaw/cam_pitch/
+// cam_pos). WASD/Q/E are read directly here instead of going through
+// racket_input, so this and the racket's own WASD/Q/E (see racket_input)
+// never fight over the same frame's input -- exactly one of them reads the
+// keyboard, gated by free_cam.
+static void update_camera(Game* e, float dt) {
+    if (e->free_cam) {
+        int mdx = 0, mdy = 0;
+        SDL_GetRelativeMouseState(&mdx, &mdy);
+        e->cam_yaw   += (float)mdx * kMouseSensitivity;
+        e->cam_pitch -= (float)mdy * kMouseSensitivity;
+        e->cam_pitch  = std::clamp(e->cam_pitch, -kMaxCamPitch, kMaxCamPitch);
+
+        const Uint8* k = SDL_GetKeyboardState(nullptr);
+        vec3 in(0.0f, 0.0f, 0.0f);
+        if (k[SDL_SCANCODE_W]) in.z -= 1.0f;
+        if (k[SDL_SCANCODE_S]) in.z += 1.0f;
+        if (k[SDL_SCANCODE_A]) in.x -= 1.0f;
+        if (k[SDL_SCANCODE_D]) in.x += 1.0f;
+        if (k[SDL_SCANCODE_Q]) in.y -= 1.0f;
+        if (k[SDL_SCANCODE_E]) in.y += 1.0f;
+        float il = magnitude(in);
+        if (il > 1e-4f) in = in / il;   // no diagonal speed boost
+
+        const float s = std::sin(e->cam_yaw), c = std::cos(e->cam_yaw);
+        vec3 move(in.x * c - in.z * s, in.y, in.x * s + in.z * c);
+        e->cam_pos = e->cam_pos + move * (e->cam_move_speed * dt);
+    }
+    e->cam.setPosition(e->cam_pos);
+    e->cam.setRotation(vec3(e->cam_pitch, e->cam_yaw, 0.0f));
 }
 
 // Rewrite dyn_tris_ = [sphere + ball.pos | racket + racket.pos] in place. The
@@ -350,6 +392,7 @@ void game_init(Game* e) {
               << "Racket: WASD / arrows move (X/Y), Q/E depth (Z)"
               << (e->racket_autopilot == 1 ? "  [auto: chase]"
                   : e->racket_autopilot == 2 ? "  [auto: recede]" : "") << "\n"
+              << "Camera: C toggles free-fly (mouse-look, WASD/Q/E move, wheel = speed)\n"
               << "Renderer: " << e->renderer.count() << " backends, "
               << e->renderer.workers() << " workers, starting on '"
               << e->renderer.current_name() << "'\n";
@@ -383,6 +426,10 @@ static vec3 racket_input(Game* e, float /*dt*/) {
         }
         return d;
     }
+    // Free-fly camera mode (toggle: C) takes WASD/Q/E for itself (see
+    // update_camera) -- freeze the racket rather than have both read the
+    // same keys the same frame.
+    if (e->free_cam) return vec3(0.0f, 0.0f, 0.0f);
     const Uint8* k = SDL_GetKeyboardState(nullptr);
     // While the demo panel is open the arrow keys drive stage navigation, so the
     // racket then only responds to WASD + Q/E.
@@ -398,6 +445,8 @@ static vec3 racket_input(Game* e, float /*dt*/) {
 }
 
 void game_update(Game* e, float dt) {
+    update_camera(e, dt);   // independent of physics; fixed view unless free_cam
+
     // Move the racket first, so the ball resolves against its new position.
     // Demo stages 1-3 disable the racket entirely.
     if (e->racket_enabled)
@@ -556,7 +605,8 @@ void game_render(Game* e, SDL_Texture* sdl_fb_texture, float dt) {
             "Model   : g %.2f  e %.2f  drag %.2f  magnus %.2f  (1/240 s)\n"
             "Racket  : p(%.1f, %.1f, %.1f)  v(%.1f, %.1f, %.1f)  hits: %ld%s\n"
             "Impact  : ball |v| %.2f -> %.2f   racket |v| %.2f\n"
-            "Move    : WASD / arrows = X/Y   Q/E = Z        [ESC] quit",
+            "Racket  : WASD / arrows = X/Y   Q/E = Z\n"
+            "Camera  : C = toggle free-fly (mouse-look, WASD/Q/E, wheel)   [ESC] quit",
             e->renderer.current_name(),
             e->renderer.current_available() ? "" : " (n/a)",
             fps, m.frame_ms,
@@ -581,9 +631,32 @@ void game_render(Game* e, SDL_Texture* sdl_fb_texture, float dt) {
 
 void game_handle_events(Game* e, SDL_Event& event, bool& running) {
     if (event.type == SDL_QUIT) { running = false; return; }
+
+    // Mouse wheel adjusts the free-fly camera's move speed (a no-op, and
+    // otherwise unused, while the racket owns WASD/Q/E).
+    if (event.type == SDL_MOUSEWHEEL) {
+        if (e->free_cam && event.wheel.y != 0) {
+            float factor = event.wheel.y > 0 ? 1.15f : 1.0f / 1.15f;
+            e->cam_move_speed = std::clamp(e->cam_move_speed * factor, 0.5f, 20.0f);
+        }
+        return;
+    }
     if (event.type != SDL_KEYDOWN) return;
 
     const SDL_Keycode k = event.key.keysym.sym;
+
+    // C toggles the free-fly camera (mouse-look + WASD/Q/E move it instead of
+    // the racket; wheel adjusts its speed). Captures/releases the cursor so
+    // mouse-look deltas are relative, matching the base engine's free-fly.
+    if (k == SDLK_c) {
+        e->free_cam = !e->free_cam;
+        SDL_SetRelativeMouseMode(e->free_cam ? SDL_TRUE : SDL_FALSE);
+        if (e->free_cam) SDL_GetRelativeMouseState(nullptr, nullptr);   // discard stale delta
+        std::cout << "Camera: " << (e->free_cam
+            ? "FREE  (mouse-look, WASD move, Q/E up/down, wheel = speed)"
+            : "FIXED (WASD / Q/E control the racket)") << "\n";
+        return;
+    }
 
     // T toggles the Technical Progress demo. Leaving it restores the full game
     // (stage 4); the last stage is remembered for the next open.
