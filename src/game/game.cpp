@@ -266,9 +266,9 @@ void game_rebuild_static(Game* e) {
     uint64_t t0 = SDL_GetPerformanceCounter();
 
     // Open scene, not a closed arena: a floor for context/shadows, the table,
-    // and ONE backdrop wall behind the far end of the table (+Z, the ball's
-    // travel direction) -- no side walls, no ceiling, so the table stays the
-    // visual centrepiece instead of a box around it.
+    // and ONE backdrop wall flush against the table's far edge (+Z, the
+    // ball's travel direction) -- no side walls, no ceiling, so the table
+    // stays the visual centrepiece instead of a box around it.
     const vec3 wall_col(0.58f, 0.58f, 0.62f);
     const vec3 floor_col(0.35f, 0.37f, 0.40f);
     const vec3 shirt_col(0.20f, 0.35f, 0.55f);
@@ -279,11 +279,20 @@ void game_rebuild_static(Game* e) {
     tris.reserve(160);
     geom::add_box(tris, vec3(-3.0f, -0.10f, -2.8f), vec3(3.0f, 0.0f, 2.6f), floor_col, 0.85f); // floor
 
-    // Backdrop wall, just past the table's far edge, aligned with the ball's
-    // primary launch direction. Visual only this checkpoint -- no physics
-    // collider yet (that is a later checkpoint).
-    const float wall_z = e->table.half_len + 0.9f;
-    geom::add_box(tris, vec3(-2.4f, 0.0f, wall_z), vec3(2.4f, 2.4f, wall_z + 0.10f), wall_col, 0.80f);
+    // Backdrop wall, flush against the table's far edge. Z sign confirmed
+    // from the scene, not assumed: the racket/character/camera all sit at
+    // z<0 (kRacketHome, camera default), the ball's default launch travels
+    // toward +Z, and the table spans z=[-half_len,+half_len] -- so +Z past
+    // half_len is the far end, on the opposite side from the player. Only a
+    // small gap (kWallGap) to avoid z-fighting with the table's surface/edge
+    // tris; previously this floated table.half_len + 0.9 past the table,
+    // which read as a separate, oversized backdrop rather than the surface
+    // the ball is about to hit. Kept secondary in size (narrower and about
+    // as tall, in-frame, as the table from the default camera) -- geometry
+    // only this checkpoint, no ball<->wall collider yet (next checkpoint).
+    const float kWallGap = 0.04f;
+    const float wall_z   = e->table.half_len + kWallGap;
+    geom::add_box(tris, vec3(-0.85f, 0.0f, wall_z), vec3(0.85f, 1.1f, wall_z + 0.10f), wall_col, 0.80f);
 
     // Regulation table (surface + edge lines + net + legs), centred at the
     // scene origin. Dimensions come from e->table so the visual mesh and the
@@ -330,9 +339,10 @@ void game_init(Game* e) {
     load_png_texture("res/textures/skybox3/null_plainsky512_dn.png", e->skybox_faces[5]);
 
     // --- arena (invisible physics bound; the visible walls are gone) ---
-    // Z max is pushed well past the backdrop wall (table.half_len + 0.9) so
-    // the ball's forward flight is never reflected back by this bound -- the
-    // wall itself has no collider yet (visual only this checkpoint).
+    // Z max is pushed well past the backdrop wall (now flush against the
+    // table, table.half_len + kWallGap) so the ball's forward flight is
+    // never reflected back by this bound -- the wall itself has no collider
+    // yet (visual only this checkpoint).
     e->arena.min = vec3(-4.0f, 0.0f, -3.5f);
     e->arena.max = vec3( 4.0f, 6.0f, 12.0f);
 
