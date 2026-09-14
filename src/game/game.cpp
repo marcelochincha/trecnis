@@ -217,6 +217,7 @@ static void apply_demo_stage(Game* e, int stage) {
             b.reset(vec3(-2.0f, 3.2f, 0.0f), vec3(3.4f, 2.4f, 1.7f), vec3(0.0f, 0.0f, 0.0f));
             e->racket_enabled = false;
             e->table_enabled  = false;
+            e->wall_enabled   = false;
             break;
         case 2:  // gravity + restitution
             b.gravity = 9.81f; b.drag = 0.0f;  b.magnus = 0.0f;
@@ -224,6 +225,7 @@ static void apply_demo_stage(Game* e, int stage) {
             b.reset(vec3(-1.5f, 5.2f, 0.0f), vec3(2.6f, 0.4f, 0.5f), vec3(0.0f, 0.0f, 0.0f));
             e->racket_enabled = false;
             e->table_enabled  = false;
+            e->wall_enabled   = false;
             break;
         case 3:  // + drag + spin + Magnus
             b.gravity = 9.81f; b.drag = 0.10f; b.magnus = 0.10f;
@@ -231,6 +233,7 @@ static void apply_demo_stage(Game* e, int stage) {
             b.reset(vec3(-3.4f, 3.8f, 0.2f), vec3(3.4f, 0.8f, 0.0f), vec3(0.0f, 20.0f, 0.0f));
             e->racket_enabled = false;
             e->table_enabled  = false;
+            e->wall_enabled   = false;
             break;
         case 4:  // full current game: ball crosses the table net under gravity +
                  // drag + spin + Magnus, lands on the far half and bounces.
@@ -247,6 +250,7 @@ static void apply_demo_stage(Game* e, int stage) {
             b.reset(vec3(0.0f, 1.5f, -1.0f), vec3(0.0f, 0.9f, 3.0f), vec3(6.0f, 0.0f, 0.0f));
             e->racket_enabled = true;
             e->table_enabled  = true;
+            e->wall_enabled   = true;
             break;
     }
     e->racket.recenter(kRacketHome);
@@ -269,7 +273,6 @@ void game_rebuild_static(Game* e) {
     // and ONE backdrop wall flush against the table's far edge (+Z, the
     // ball's travel direction) -- no side walls, no ceiling, so the table
     // stays the visual centrepiece instead of a box around it.
-    const vec3 wall_col(0.58f, 0.58f, 0.62f);
     const vec3 floor_col(0.35f, 0.37f, 0.40f);
     const vec3 shirt_col(0.20f, 0.35f, 0.55f);
     const vec3 pants_col(0.15f, 0.15f, 0.18f);
@@ -279,20 +282,13 @@ void game_rebuild_static(Game* e) {
     tris.reserve(160);
     geom::add_box(tris, vec3(-3.0f, -0.10f, -2.8f), vec3(3.0f, 0.0f, 2.6f), floor_col, 0.85f); // floor
 
-    // Backdrop wall, flush against the table's far edge. Z sign confirmed
-    // from the scene, not assumed: the racket/character/camera all sit at
-    // z<0 (kRacketHome, camera default), the ball's default launch travels
-    // toward +Z, and the table spans z=[-half_len,+half_len] -- so +Z past
-    // half_len is the far end, on the opposite side from the player. Only a
-    // small gap (kWallGap) to avoid z-fighting with the table's surface/edge
-    // tris; previously this floated table.half_len + 0.9 past the table,
-    // which read as a separate, oversized backdrop rather than the surface
-    // the ball is about to hit. Kept secondary in size (narrower and about
-    // as tall, in-frame, as the table from the default camera) -- geometry
-    // only this checkpoint, no ball<->wall collider yet (next checkpoint).
-    const float kWallGap = 0.04f;
-    const float wall_z   = e->table.half_len + kWallGap;
-    geom::add_box(tris, vec3(-0.85f, 0.0f, wall_z), vec3(0.85f, 1.1f, wall_z + 0.10f), wall_col, 0.80f);
+    // Backdrop wall (surface + collider from the same e->wall fields -- see
+    // game_init for where inner_z is derived from table.half_len). Z sign
+    // confirmed from the scene, not assumed: the racket/character/camera all
+    // sit at z<0 (kRacketHome, camera default), the ball's default launch
+    // travels toward +Z, and the table spans z=[-half_len,+half_len] -- so
+    // +Z past half_len is the far end, on the opposite side from the player.
+    e->wall.append_tris(tris);
 
     // Regulation table (surface + edge lines + net + legs), centred at the
     // scene origin. Dimensions come from e->table so the visual mesh and the
@@ -338,11 +334,18 @@ void game_init(Game* e) {
     load_png_texture("res/textures/skybox3/null_plainsky512_up.png", e->skybox_faces[4]);
     load_png_texture("res/textures/skybox3/null_plainsky512_dn.png", e->skybox_faces[5]);
 
+    // --- backdrop wall: flush against the table's far edge, only a small gap
+    //     (kWallGap) to avoid z-fighting with the table's surface/edge tris.
+    //     Single source of truth for both the mesh (game_rebuild_static) and
+    //     the collider (Ball::step_fixed) -- e->wall itself, not a second,
+    //     separately-tracked coordinate. ---
+    const float kWallGap = 0.04f;
+    e->wall.inner_z = e->table.half_len + kWallGap;
+
     // --- arena (invisible physics bound; the visible walls are gone) ---
-    // Z max is pushed well past the backdrop wall (now flush against the
-    // table, table.half_len + kWallGap) so the ball's forward flight is
-    // never reflected back by this bound -- the wall itself has no collider
-    // yet (visual only this checkpoint).
+    // Z max is pushed well past the backdrop wall so the ball's forward
+    // flight is never reflected back by this bound before it can reach the
+    // wall's own (now real) collider.
     e->arena.min = vec3(-4.0f, 0.0f, -3.5f);
     e->arena.max = vec3( 4.0f, 6.0f, 12.0f);
 
@@ -469,7 +472,8 @@ void game_update(Game* e, float dt) {
     uint64_t tp = SDL_GetPerformanceCounter();
     e->bounces_total += e->ball.update(dt, e->arena,
                                        e->racket_enabled ? &e->racket.collider() : nullptr,
-                                       e->table_enabled  ? &e->table            : nullptr);
+                                       e->table_enabled  ? &e->table            : nullptr,
+                                       e->wall_enabled   ? &e->wall             : nullptr);
     refresh_dyn_tris(e);                           // in-place, no allocation
     e->sphere_mesh_.setPosition(e->ball.pos);      // raster mirrors follow
     e->racket_mesh_.setPosition(e->racket.position());

@@ -28,6 +28,7 @@
 #include <math/sr_math.hpp>
 #include <core/sr_geometry.hpp>   // AABB
 #include <game/table.hpp>         // Table (surface collision only)
+#include <game/wall.hpp>          // Wall (backdrop wall collision)
 
 // Oriented bounding box obstacle — pure math. The racket produces one of these
 // (its centre + velocity track the paddle) and hands it to Ball::update; the
@@ -66,11 +67,11 @@ struct Ball {
     float hit_speed_out    = 0.0f;  // ball |v| just after
     float hit_racket_speed = 0.0f;  // racket |v| at that contact
 
-    // Advance by the real frame dt. `racket` and `table` may be null. Returns
-    // the number of contacts this frame (rebounds; a settle onto the floor
-    // does not count).
+    // Advance by the real frame dt. `racket`, `table` and `wall` may be
+    // null. Returns the number of contacts this frame (rebounds; a settle
+    // onto the floor does not count).
     int update(float dt, const AABB& bounds, const Obb* racket = nullptr,
-               const Table* table = nullptr);
+               const Table* table = nullptr, const Wall* wall = nullptr);
 
     // Re-seed the ball's state (used when a demo stage switches). Tunables
     // (gravity/drag/...) are plain fields the caller sets separately.
@@ -87,5 +88,5 @@ struct Ball {
 private:
     float accum_ = 0.0f;   // unconsumed simulated time
     int   step_fixed(float h, const AABB& b, const Obb* racket,
-                      const Table* table);   // one fixed sub-step
+                      const Table* table, const Wall* wall);   // one fixed sub-step
 };

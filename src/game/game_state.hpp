@@ -28,6 +28,7 @@
 #include <game/ball.hpp>
 #include <game/racket.hpp>
 #include <game/table.hpp>
+#include <game/wall.hpp>
 
 // game/ deliberately does NOT include sr_raytrace.hpp / sr_ocl.hpp /
 // cpu_tracer.hpp. The seam to render/ is RenderScene + Renderer + bvh.hpp only.
@@ -90,6 +91,7 @@ struct Game {
     Ball   ball;
     Racket racket;                              // user-movable paddle (dynamic BVH)
     Table  table;                               // regulation dims; static geometry + ball collider
+    Wall   wall;                                // backdrop wall; static geometry + ball collider
     AABB   arena;                               // ball centre stays inside this
     AABB   racket_limits;                       // racket centre stays inside this
     float  racket_speed = 5.0f;                 // u/s, player move speed
@@ -97,6 +99,7 @@ struct Game {
     long   hits_reported_ = 0;                  // last racket-hit count logged
     bool   racket_enabled = true;               // demo stages 1-3 hide/disable the racket
     bool   table_enabled  = true;               // demo stages 1-3 disable the table collider too
+    bool   wall_enabled   = true;               // demo stages 1-3 disable the wall collider too
     int    bounces_total = 0;
 
     // --- Technical Progress / Physics Evolution demo (T) ------------------

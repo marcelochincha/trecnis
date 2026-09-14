@@ -62,19 +62,19 @@ bool Obb::resolve(vec3& c, vec3& v, float r) const {
 // Ball integration
 // ---------------------------------------------------------------------------
 
-int Ball::update(float dt, const AABB& b, const Obb* racket, const Table* table) {
+int Ball::update(float dt, const AABB& b, const Obb* racket, const Table* table, const Wall* wall) {
     if (dt < 0.0f) dt = 0.0f;
     accum_ += std::min(dt, kMaxCatchUp);
 
     int contacts = 0;
     while (accum_ >= kFixedStep) {
-        contacts += step_fixed(kFixedStep, b, racket, table);
+        contacts += step_fixed(kFixedStep, b, racket, table, wall);
         accum_   -= kFixedStep;
     }
     return contacts;
 }
 
-int Ball::step_fixed(float h, const AABB& b, const Obb* racket, const Table* table) {
+int Ball::step_fixed(float h, const AABB& b, const Obb* racket, const Table* table, const Wall* wall) {
     // --- forces -> acceleration (gravity + Magnus), then velocity ---
     // Magnus is perpendicular to vel, so it curves the path without adding speed.
     vec3 a = vec3(0.0f, -gravity, 0.0f) + magnus * cross(spin, vel);
@@ -109,6 +109,13 @@ int Ball::step_fixed(float h, const AABB& b, const Obb* racket, const Table* tab
     // Table surface (only inside its footprint; a no-op elsewhere, so the ball
     // still falls through to the room floor below once it clears the table).
     if (table && table->resolve(prev_y, pos, vel, radius, restitution, rest_speed)) ++c;
+
+    // Backdrop wall, flush against the table's far edge: reflects the
+    // approaching (+Z) ball back toward -Z with restitution, confined to the
+    // wall's finite panel (Wall::resolve). A no-op elsewhere, so a ball that
+    // never reaches the wall's X/Y footprint (or the far side of the table)
+    // is unaffected.
+    if (wall && wall->resolve(pos, vel, radius, restitution)) ++c;
 
     // Floor / table (Y min): reflect with restitution, or settle to rest once
     // the rebound would be negligible (normal kinetic energy fully dissipated).
