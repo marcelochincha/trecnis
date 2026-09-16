@@ -199,16 +199,33 @@ static constexpr float kHitWindowTimeScale = 0.2f;   // dt multiplier for Ball::
 static constexpr float kTimeScaleLerpRate  = 8.0f;   // 1/s; how fast time_scale eases toward its target (real dt, not scaled)
 static constexpr float kChargeRate         = 1.0f;   // units/s; charge 0->1 in ~1 real second while LMB is held
 
-// Swing tunables (see perform_hit below). Simple and stable on purpose: no
-// independent aim, no spin -- a later checkpoint can build on this.
+// Swing tunables (see perform_hit below). Simple and stable on purpose.
 static constexpr float kHitReach           = 0.45f;  // max ball<->racket distance (world units) for a release to register as a hit -- no hits "at a distance"
 static constexpr float kMinHitForce        = 2.5f;   // hit_strength at charge = 0
 static constexpr float kMaxHitForce        = 8.0f;   // hit_strength at charge = 1 (comparable scale to the ~7.1 u/s original serve, not an explosion)
 static constexpr float kRacketVelInfluence = 0.5f;   // how much of Racket::velocity() carries into the shot
-static constexpr float kHitUpBias          = 0.25f;  // small fixed upward lean blended into the racket's face normal, so shots arc instead of firing flat
+static constexpr float kHitUpBias          = 0.25f;  // small fixed upward lean blended into the base direction, so a neutral-aim shot still arcs instead of firing flat
 static constexpr float kMinHitForwardZ     = 1.5f;   // floor on the shot's +Z component -- "pelota sale hacia delante" always holds
 static constexpr float kMaxBallHitSpeed    = 10.0f;  // safety clamp on the resulting ball speed
 static constexpr float kHitFlashSeconds    = 0.6f;   // how long "HIT!" stays on the HUD after a successful swing
+
+// Aim tunables (compute_hit_direction below). aim_x/aim_y are the racket's
+// own position offset from kRacketHome, normalized to [-1,1] by these
+// reaches, THEN scaled by the strengths -- worst case (both maxed out) the
+// direction sits ~33 deg off the base forward direction, well short of an
+// extreme angle.
+static constexpr float kAimReachX          = 1.0f;   // world units, X, for a full +-1 aim deflection (matches racket_limits' own X half-extent)
+static constexpr float kAimReachY          = 0.30f;  // world units, Y, for a full +-1 aim deflection
+static constexpr float kAimSidewaysStrength = 0.45f; // max left/right contribution to the (normalized) hit direction
+static constexpr float kAimVerticalStrength = 0.20f; // max up/down contribution, on top of kHitUpBias
+
+// Spin tunables (compute_hit_spin below). Basic: driven directly by the
+// racket's velocity at the moment of the swing (vertical brush -> topspin/
+// backspin on spin.x, horizontal brush -> sidespin on spin.y) -- feeds
+// Ball::spin only; Ball::step_fixed's existing Magnus term does the actual
+// curving, untouched.
+static constexpr float kSpinFromRacketVel  = 4.0f;   // rad/s of spin per (u/s) of racket velocity
+static constexpr float kMaxSpinComponent   = 20.0f;  // rad/s, per-axis clamp (matches the scale already used by the Technical Progress demo's stage 3)
 
 // Cursor position -> racket target (world X/Y around kRacketHome; Z left at
 // the racket's CURRENT depth, untouched -- Q/E do not drive Z in this mode).
@@ -233,6 +250,43 @@ static vec3 mouse_racket_target(Game* e) {
                 e->racket.position().z);
 }
 
+// Hit direction: still rooted in the racket's own hitting face (+Z-ish --
+// "debe seguir existiendo una direccion base hacia el lado contrario de la
+// mesa"), but now steerable: blended with the racket's CURRENT position
+// offset from kRacketHome on X (left/right) and Y (up/down) -- i.e. where
+// the player has aimed the racket, via the mouse in GAMEPLAY mode or WASD
+// in DEBUG mode (both already move Racket::position(), read here exactly
+// like everything else reads it -- never raw screen pixels). Each axis is
+// normalized and clamped to [-1,1] before scaling, bounding the resulting
+// angle off the base direction regardless of how far the racket travels.
+static vec3 compute_hit_direction(Game* e) {
+    const vec3  offset = e->racket.position() - kRacketHome;
+    const float aim_x  = std::clamp(offset.x / kAimReachX, -1.0f, 1.0f);
+    const float aim_y  = std::clamp(offset.y / kAimReachY, -1.0f, 1.0f);
+
+    vec3 dir = e->racket.face_normal();
+    dir.x += aim_x * kAimSidewaysStrength;
+    dir.y += aim_y * kAimVerticalStrength + kHitUpBias;
+    const float dl = magnitude(dir);
+    if (dl > 1e-5f) dir = dir / dl;
+    return dir;
+}
+
+// Hit spin: a BASIC system, driven by Racket::velocity() at the moment of
+// the swing (already tracked by Racket::step, untouched here) -- vertical
+// racket motion (brushing up/down) becomes topspin/backspin on spin.x,
+// horizontal motion (brushing sideways) becomes sidespin on spin.y. No
+// independent trajectory prediction, no new Magnus model: this only ever
+// WRITES Ball::spin; the existing `magnus * cross(spin, vel)` term in
+// Ball::step_fixed is what actually curves the flight, completely
+// untouched. Clamped per axis to a modest, already-demonstrated range.
+static vec3 compute_hit_spin(Game* e) {
+    const vec3 rv = e->racket.velocity();
+    const float sx = std::clamp(rv.y * kSpinFromRacketVel, -kMaxSpinComponent, kMaxSpinComponent);
+    const float sy = std::clamp(rv.x * kSpinFromRacketVel, -kMaxSpinComponent, kMaxSpinComponent);
+    return vec3(sx, sy, 0.0f);
+}
+
 // Converts the accumulated charge into a new ball velocity -- a scripted
 // gameplay "swing", not a physics contact response. Called only from the
 // LMB-up handler in game_handle_events, only while a charge is in flight
@@ -250,14 +304,8 @@ static bool perform_hit(Game* e) {
     }
 
     const float charge_used = e->charge;
-
-    // Direction: the racket's own hitting face (already +Z-ish, i.e. toward
-    // the far side of the table -- see Racket::face_normal), blended with a
-    // small fixed upward lean so the shot arcs instead of firing flat. No
-    // independent aim system, exactly as asked.
-    vec3 dir = e->racket.face_normal() + vec3(0.0f, kHitUpBias, 0.0f);
-    float dl = magnitude(dir);
-    if (dl > 1e-5f) dir = dir / dl;
+    const vec3  dir         = compute_hit_direction(e);
+    const vec3  spin        = compute_hit_spin(e);
 
     // hit_strength = lerp(min_force, max_force, charge), combined with the
     // racket's own swing velocity (Racket::velocity(), already tracked by
@@ -280,16 +328,17 @@ static bool perform_hit(Game* e) {
     // re-process the same contact against the brand-new velocity.
     const float clearance = e->racket.collider().half.z + e->ball.radius + 0.02f;
     e->ball.pos = e->racket.position() + dir * clearance;
-    e->ball.apply_hit(new_vel);
+    e->ball.apply_hit(new_vel);   // velocity only -- unchanged, still just a setter
+    e->ball.spin = spin;          // feeds Ball::spin directly; Ball::step_fixed's existing Magnus term does the rest
 
     e->charging = false;
     e->charge   = 0.0f;
     e->hit_flash_timer = kHitFlashSeconds;
 
     if (global_config.debug_mode)
-        std::printf("[swing] HIT charge=%.2f strength=%.2f dist=%.2f -> ball |v|=%.2f (%.2f,%.2f,%.2f) rkt|v|=%.2f\n",
+        std::printf("[swing] HIT charge=%.2f strength=%.2f dist=%.2f -> ball |v|=%.2f (%.2f,%.2f,%.2f) spin=(%.1f,%.1f) rkt|v|=%.2f\n",
                     charge_used, hit_strength, dist, sp, new_vel.x, new_vel.y, new_vel.z,
-                    magnitude(e->racket.velocity()));
+                    spin.x, spin.y, magnitude(e->racket.velocity()));
     return true;
 }
 
@@ -791,6 +840,16 @@ void game_render(Game* e, SDL_Texture* sdl_fb_texture, float dt) {
 
         vec3 rp = e->racket.position(), rv = e->racket.velocity();
 
+        // Live AIM/SPIN preview -- exactly what perform_hit would use if LMB
+        // were released right now (same helpers, so the HUD can never drift
+        // out of sync with the actual swing). aim_x/aim_y recomputed inline
+        // (same two lines compute_hit_direction uses) since the HUD wants
+        // the raw normalized values, not the blended 3D direction.
+        const vec3  aim_offset = e->racket.position() - kRacketHome;
+        const float aim_x = std::clamp(aim_offset.x / kAimReachX, -1.0f, 1.0f);
+        const float aim_y = std::clamp(aim_offset.y / kAimReachY, -1.0f, 1.0f);
+        const vec3  live_spin = compute_hit_spin(e);
+
         // Minimal ASCII power bar (10 chars) -- no new render primitives, no
         // per-frame allocation, just text through the existing draw_text HUD.
         char power_bar[11];
@@ -816,6 +875,7 @@ void game_render(Game* e, SDL_Texture* sdl_fb_texture, float dt) {
             "Impact  : ball |v| %.2f -> %.2f   racket |v| %.2f\n"
             "Control : %s   [M] toggle\n"
             "HIT WINDOW: %s   POWER: [%s] %3.0f%%   TIME SCALE: %.2f / 1.00%s\n"
+            "AIM: (%+.2f, %+.2f)   SPIN: (%+.1f, %+.1f) rad/s\n"
             "Camera  : C = toggle free-fly (mouse-look, WASD/Q/E, wheel)   [ESC] quit",
             e->renderer.current_name(),
             e->renderer.current_available() ? "" : " (n/a)",
@@ -832,7 +892,8 @@ void game_render(Game* e, SDL_Texture* sdl_fb_texture, float dt) {
             e->ball.hit_speed_in, e->ball.hit_speed_out, e->ball.hit_racket_speed,
             e->racket_mouse_mode ? "GAMEPLAY (mouse aims X/Y)" : "DEBUG/MANUAL (WASD/arrows=X/Y, Q/E=Z)",
             e->hit_window ? "YES" : "NO", power_bar, e->charge * 100.0f, e->time_scale,
-            e->hit_flash_timer > 0.0f ? "   >>> HIT! <<<" : "");
+            e->hit_flash_timer > 0.0f ? "   >>> HIT! <<<" : "",
+            aim_x, aim_y, live_spin.x, live_spin.y);
 
         draw_text(e->fb, 11, 11, hud, 0xAA000000, 0xAA000000);
         draw_text(e->fb, 10, 10, hud, 0xFFFFFFFF);
