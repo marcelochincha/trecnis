@@ -104,10 +104,11 @@ struct Game {
     int    bounces_total = 0;
     bool   hit_window = false;                  // true once the ball is closing in on the player's side (see game_update)
 
-    // --- hit window: slow motion + charge (preparation only, no impact yet) ---
+    // --- hit window: slow motion + charge + swing --------------------------
     float  time_scale = 1.0f;                   // dt multiplier fed to Ball::update only (1.0 normal, ~0.2 in hit_window); eases toward its target, never touches Ball::step_fixed
     bool   charging   = false;                  // true while LMB is held down inside hit_window (see game_handle_events)
-    float  charge     = 0.0f;                   // [0,1]; keeps its value once LMB is released, reset to 0 if hit_window closes while still charging -- unused by physics until a later checkpoint
+    float  charge     = 0.0f;                   // [0,1]; keeps its value once LMB is released, reset to 0 if hit_window closes while still charging, or once a swing consumes it
+    float  hit_flash_timer = 0.0f;               // seconds remaining to show "HIT!" on the HUD (real time, counts down in game_update)
 
     // --- Technical Progress / Physics Evolution demo (T) ------------------
     bool   demo_open  = false;                  // demo panel visible + a stage's feature set active

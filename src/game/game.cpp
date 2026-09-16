@@ -199,6 +199,17 @@ static constexpr float kHitWindowTimeScale = 0.2f;   // dt multiplier for Ball::
 static constexpr float kTimeScaleLerpRate  = 8.0f;   // 1/s; how fast time_scale eases toward its target (real dt, not scaled)
 static constexpr float kChargeRate         = 1.0f;   // units/s; charge 0->1 in ~1 real second while LMB is held
 
+// Swing tunables (see perform_hit below). Simple and stable on purpose: no
+// independent aim, no spin -- a later checkpoint can build on this.
+static constexpr float kHitReach           = 0.45f;  // max ball<->racket distance (world units) for a release to register as a hit -- no hits "at a distance"
+static constexpr float kMinHitForce        = 2.5f;   // hit_strength at charge = 0
+static constexpr float kMaxHitForce        = 8.0f;   // hit_strength at charge = 1 (comparable scale to the ~7.1 u/s original serve, not an explosion)
+static constexpr float kRacketVelInfluence = 0.5f;   // how much of Racket::velocity() carries into the shot
+static constexpr float kHitUpBias          = 0.25f;  // small fixed upward lean blended into the racket's face normal, so shots arc instead of firing flat
+static constexpr float kMinHitForwardZ     = 1.5f;   // floor on the shot's +Z component -- "pelota sale hacia delante" always holds
+static constexpr float kMaxBallHitSpeed    = 10.0f;  // safety clamp on the resulting ball speed
+static constexpr float kHitFlashSeconds    = 0.6f;   // how long "HIT!" stays on the HUD after a successful swing
+
 // Cursor position -> racket target (world X/Y around kRacketHome; Z left at
 // the racket's CURRENT depth, untouched -- Q/E do not drive Z in this mode).
 // Uses the real OS cursor position (SDL_GetMouseState), not a relative-mode
@@ -220,6 +231,66 @@ static vec3 mouse_racket_target(Game* e) {
     return vec3(kRacketHome.x + nx * kMouseReachX,
                 kRacketHome.y - ny * kMouseReachY,
                 e->racket.position().z);
+}
+
+// Converts the accumulated charge into a new ball velocity -- a scripted
+// gameplay "swing", not a physics contact response. Called only from the
+// LMB-up handler in game_handle_events, only while a charge is in flight
+// inside an open hit_window. Reuses exactly what already exists (Racket::
+// position/face_normal/velocity, Ball::pos, Game::charge) -- no new
+// collision system, Obb::resolve is never called here. Returns false (no
+// effect on the ball) if the ball was out of reach -- "no golpes magicos a
+// distancia"; the caller still resolves the charge session either way.
+static bool perform_hit(Game* e) {
+    const float dist = magnitude(e->ball.pos - e->racket.position());
+    if (dist > kHitReach) {
+        if (global_config.debug_mode)
+            std::printf("[swing] miss -- ball %.2f away (reach %.2f)\n", dist, kHitReach);
+        return false;
+    }
+
+    const float charge_used = e->charge;
+
+    // Direction: the racket's own hitting face (already +Z-ish, i.e. toward
+    // the far side of the table -- see Racket::face_normal), blended with a
+    // small fixed upward lean so the shot arcs instead of firing flat. No
+    // independent aim system, exactly as asked.
+    vec3 dir = e->racket.face_normal() + vec3(0.0f, kHitUpBias, 0.0f);
+    float dl = magnitude(dir);
+    if (dl > 1e-5f) dir = dir / dl;
+
+    // hit_strength = lerp(min_force, max_force, charge), combined with the
+    // racket's own swing velocity (Racket::velocity(), already tracked by
+    // Racket::step -- untouched here).
+    const float hit_strength = kMinHitForce + (kMaxHitForce - kMinHitForce) * charge_used;
+    vec3 new_vel = dir * hit_strength + e->racket.velocity() * kRacketVelInfluence;
+
+    // Always send the ball forward, away from the player -- guarantees
+    // "raqueta -> golpe -> pelota sale hacia delante" regardless of how the
+    // charge/racket-velocity combination came out.
+    if (new_vel.z < kMinHitForwardZ) new_vel.z = kMinHitForwardZ;
+
+    const float sp = magnitude(new_vel);
+    if (sp > kMaxBallHitSpeed) new_vel = new_vel * (kMaxBallHitSpeed / sp);
+
+    // Place the ball just clear of the racket's own OBB along the hit
+    // direction (its half-extent along the face-normal axis + ball radius +
+    // a small margin) before this frame's Ball::update() runs -- so the
+    // ordinary per-substep Obb::resolve() (unmodified) doesn't immediately
+    // re-process the same contact against the brand-new velocity.
+    const float clearance = e->racket.collider().half.z + e->ball.radius + 0.02f;
+    e->ball.pos = e->racket.position() + dir * clearance;
+    e->ball.apply_hit(new_vel);
+
+    e->charging = false;
+    e->charge   = 0.0f;
+    e->hit_flash_timer = kHitFlashSeconds;
+
+    if (global_config.debug_mode)
+        std::printf("[swing] HIT charge=%.2f strength=%.2f dist=%.2f -> ball |v|=%.2f (%.2f,%.2f,%.2f) rkt|v|=%.2f\n",
+                    charge_used, hit_strength, dist, sp, new_vel.x, new_vel.y, new_vel.z,
+                    magnitude(e->racket.velocity()));
+    return true;
 }
 
 // Descriptions shown in the demo panel (index 0 = stage 1).
@@ -557,12 +628,14 @@ void game_update(Game* e, float dt) {
     e->racket_mesh_.setPosition(e->racket.position());
     e->metrics.physics_ms = Metrics::ema(e->metrics.physics_ms, ms_since(tp));
 
-    // Hit-window detection (preparation only -- no slow motion / charge /
-    // swing yet): true while the ball is on its way toward the player's
-    // side, inside a generous z-band around the racket's own depth range.
-    // Simple position+velocity check on the just-updated ball state, no new
-    // state machine -- matches the existing plain-bool-flag style already
-    // used for racket/table/wall enable flags above.
+    // Hit-window detection: true while the ball is on its way toward the
+    // player's side, inside a generous z-band around the racket's own depth
+    // range. Simple position+velocity check on the just-updated ball state,
+    // no new state machine -- matches the existing plain-bool-flag style
+    // already used for racket/table/wall enable flags above. A successful
+    // swing (perform_hit) sends the ball back out with vel.z > 0, so this
+    // same check naturally flips hit_window false again on the very next
+    // evaluation -- nothing special needed to "end" the window after a hit.
     {
         const float kHitWindowNearZ = e->racket_limits.max.z + 0.30f;   // starts a bit before the racket's own z range
         const float kHitWindowFarZ  = e->racket_limits.min.z - 0.30f;   // ends a bit past it (ball behind the player)
@@ -576,14 +649,18 @@ void game_update(Game* e, float dt) {
     // held, the in-progress charge is cancelled outright rather than kept
     // (caso 3 -- an interrupted charge is not a "final" one). Uses the REAL
     // dt, same reasoning as the racket above: charging is a player action,
-    // not part of the slowed simulation. No new value transfer to the ball
-    // yet -- charge is only stored for a later checkpoint.
+    // not part of the slowed simulation. Releasing LMB (game_handle_events)
+    // is what actually consumes a charge into a swing via perform_hit -- this
+    // block only ever cancels, never applies a hit.
     if (!e->hit_window && e->charging) {
         e->charging = false;
         e->charge   = 0.0f;
     } else if (e->charging) {
         e->charge = std::clamp(e->charge + kChargeRate * dt, 0.0f, 1.0f);
     }
+
+    // "HIT!" HUD flash: a plain countdown, no timer/animation system.
+    if (e->hit_flash_timer > 0.0f) e->hit_flash_timer = std::max(0.0f, e->hit_flash_timer - dt);
 
     // One line per racket contact (--debug): incoming/outgoing ball speed and
     // the racket speed at impact, to see the velocity transfer.
@@ -697,11 +774,11 @@ void game_render(Game* e, SDL_Texture* sdl_fb_texture, float dt) {
         next_log += 2.0;
         vec3 rp = e->racket.position(), rv = e->racket.velocity();
         std::printf("[perf] t=%5.1fs | fps %3.0f | frame %5.2f ms | physics %.3f | dynBVH %.3f | render %5.2f "
-                    "| ball(%.2f,%.2f,%.2f) |v|=%.2f bounces %d racket %ld net %ld "
+                    "| ball(%.2f,%.2f,%.2f) |v|=%.2f bounces %d racket %ld net %ld swing %ld "
                     "| rkt(%.2f,%.2f,%.2f) |vr|=%.2f ctrl=%s hitwin=%d ts=%.2f charge=%.2f(%d)\n",
                     elapsed, fps, m.frame_ms, m.physics_ms, m.dyn_build_ms, m.render_ms,
                     e->ball.pos.x, e->ball.pos.y, e->ball.pos.z,
-                    e->ball.speed(), e->bounces_total, e->ball.racket_hits, e->ball.net_hits,
+                    e->ball.speed(), e->bounces_total, e->ball.racket_hits, e->ball.net_hits, e->ball.swing_hits,
                     rp.x, rp.y, rp.z, magnitude(rv),
                     e->racket_mouse_mode ? "mouse" : "wasd", e->hit_window ? 1 : 0,
                     e->time_scale, e->charge, e->charging ? 1 : 0);
@@ -738,7 +815,7 @@ void game_render(Game* e, SDL_Texture* sdl_fb_texture, float dt) {
             "Racket  : p(%.1f, %.1f, %.1f)  v(%.1f, %.1f, %.1f)  hits: %ld%s\n"
             "Impact  : ball |v| %.2f -> %.2f   racket |v| %.2f\n"
             "Control : %s   [M] toggle\n"
-            "HIT WINDOW: %s   POWER: [%s] %3.0f%%   TIME SCALE: %.2f / 1.00\n"
+            "HIT WINDOW: %s   POWER: [%s] %3.0f%%   TIME SCALE: %.2f / 1.00%s\n"
             "Camera  : C = toggle free-fly (mouse-look, WASD/Q/E, wheel)   [ESC] quit",
             e->renderer.current_name(),
             e->renderer.current_available() ? "" : " (n/a)",
@@ -754,7 +831,8 @@ void game_render(Game* e, SDL_Texture* sdl_fb_texture, float dt) {
             e->racket_autopilot == 1 ? "  [chase]" : e->racket_autopilot == 2 ? "  [recede]" : "",
             e->ball.hit_speed_in, e->ball.hit_speed_out, e->ball.hit_racket_speed,
             e->racket_mouse_mode ? "GAMEPLAY (mouse aims X/Y)" : "DEBUG/MANUAL (WASD/arrows=X/Y, Q/E=Z)",
-            e->hit_window ? "YES" : "NO", power_bar, e->charge * 100.0f, e->time_scale);
+            e->hit_window ? "YES" : "NO", power_bar, e->charge * 100.0f, e->time_scale,
+            e->hit_flash_timer > 0.0f ? "   >>> HIT! <<<" : "");
 
         draw_text(e->fb, 11, 11, hud, 0xAA000000, 0xAA000000);
         draw_text(e->fb, 10, 10, hud, 0xFFFFFFFF);
@@ -781,16 +859,22 @@ void game_handle_events(Game* e, SDL_Event& event, bool& running) {
     // (and not while free-fly owns the mouse). Starting the charge is an
     // edge (button-down) event, same as every other discrete control in
     // this function; the charge VALUE itself increases continuously in
-    // game_update while e->charging stays true (see there). Releasing just
-    // stops the increase -- the reached value stays in e->charge ("guardar
-    // el charge final") until either the next charge overwrites it or
-    // hit_window closes mid-charge and cancels it (also in game_update).
+    // game_update while e->charging stays true (see there).
     if (event.type == SDL_MOUSEBUTTONDOWN && event.button.button == SDL_BUTTON_LEFT) {
         if (e->hit_window && !e->free_cam) e->charging = true;
         return;
     }
+    // Releasing resolves the charge session one way or the other: if the
+    // window is still open, try to convert it into a swing (perform_hit --
+    // itself gated by ball<->racket proximity, "no golpes magicos a
+    // distancia"); otherwise, or if the ball was out of reach, the charge is
+    // cancelled outright rather than left lying around for some later,
+    // unrelated release to consume.
     if (event.type == SDL_MOUSEBUTTONUP && event.button.button == SDL_BUTTON_LEFT) {
-        e->charging = false;
+        if (e->charging) {
+            bool hit = e->hit_window && perform_hit(e);
+            if (!hit) { e->charging = false; e->charge = 0.0f; }
+        }
         return;
     }
 

@@ -68,6 +68,7 @@ struct Ball {
     float hit_speed_out    = 0.0f;  // ball |v| just after
     float hit_racket_speed = 0.0f;  // racket |v| at that contact
     long  net_hits         = 0;  // cumulative net contacts (telemetry)
+    long  swing_hits       = 0;  // cumulative gameplay swings applied via apply_hit() (telemetry)
 
     // Advance by the real frame dt. `racket`, `table` and `wall` may be
     // null. Returns the number of contacts this frame (rebounds; a settle
@@ -83,7 +84,17 @@ struct Ball {
         racket_hits = 0;
         hit_speed_in = hit_speed_out = hit_racket_speed = 0.0f;
         net_hits = 0;
+        swing_hits = 0;
     }
+
+    // Override the ball's velocity directly: a gameplay "swing" impulse (a
+    // charged racket hit converted to a new velocity in game.cpp), NOT a
+    // physics contact response -- Obb::resolve/Table::resolve/Wall::resolve
+    // and step_fixed's equations are completely untouched by this. Position
+    // is left alone; the caller (game.cpp) is responsible for placing the
+    // ball clear of any collider it doesn't want re-resolved against on the
+    // very next sub-step (see perform_hit in game.cpp).
+    void apply_hit(const vec3& new_vel) { vel = new_vel; ++swing_hits; }
 
     float speed()     const { return magnitude(vel); }
     float spin_rate() const { return magnitude(spin); }
