@@ -235,19 +235,29 @@ static void apply_demo_stage(Game* e, int stage) {
             e->table_enabled  = false;
             e->wall_enabled   = false;
             break;
-        case 4:  // full current game: ball crosses the table net under gravity +
-                 // drag + spin + Magnus, lands on the far half and bounces.
+        case 4:  // full current game: mesa -> red -> pared -> mesa -> jugador,
+                 // under gravity + drag + spin + Magnus, unchanged.
         default:
             b.gravity = 9.81f; b.drag = 0.10f; b.magnus = 0.10f;
             b.restitution = 0.75f;
-            // Serve from the player's side (z < 0, near the racket/character),
-            // arcing over the net (z = 0) with clearance, landing on the far
-            // half and continuing toward the backdrop wall. Lower and flatter
-            // than the previous checkpoint's launch (was y=2.0, a floaty lob
-            // unrelated to the racket/character height) -- only the initial
-            // position/velocity/spin changed here, Ball::step_fixed itself
-            // (gravity/drag/spin/Magnus/restitution) is untouched.
-            b.reset(vec3(0.0f, 1.5f, -1.0f), vec3(0.0f, 0.9f, 3.0f), vec3(6.0f, 0.0f, 0.0f));
+            // Serve from the player's side (z < 0, near the racket/character):
+            // clears the net at full height on the outbound leg, bounces once
+            // on the far half, hits the backdrop wall, and rebounds. Found by
+            // an offline numerical search over launch parameters (same
+            // gravity/drag/restitution/table/net/wall equations as
+            // Ball::step_fixed, reimplemented read-only for the search --
+            // nothing here changes step_fixed itself): the return leg grazes
+            // the TOP of the net (a real "let"-style net contact, not a clean
+            // fly-over -- exercises Table::resolve_net's box collider, not
+            // just Table::resolve/Wall::resolve), settles into several
+            // shrinking bounces on our half, and rolls off the table's near
+            // edge into the player's zone (racket_limits z in
+            // [-1.90,-1.20]) under its own residual momentum -- no bounce is
+            // more energetic than the one before it. A launch that also
+            // bounces on OUR half before the net (the literal first step in
+            // the checkpoint's diagram) was swept broadly and never returned
+            // within the visible floor -- see the checkpoint report.
+            b.reset(vec3(0.0f, 1.5f, -1.2f), vec3(0.0f, 1.8f, 5.0f), vec3(0.0f, 0.0f, 0.0f));
             e->racket_enabled = true;
             e->table_enabled  = true;
             e->wall_enabled   = true;
@@ -591,11 +601,11 @@ void game_render(Game* e, SDL_Texture* sdl_fb_texture, float dt) {
         next_log += 2.0;
         vec3 rp = e->racket.position(), rv = e->racket.velocity();
         std::printf("[perf] t=%5.1fs | fps %3.0f | frame %5.2f ms | physics %.3f | dynBVH %.3f | render %5.2f "
-                    "| ball(%.2f,%.2f,%.2f) |v|=%.2f bounces %d racket %ld "
+                    "| ball(%.2f,%.2f,%.2f) |v|=%.2f bounces %d racket %ld net %ld "
                     "| rkt(%.2f,%.2f,%.2f) |vr|=%.2f\n",
                     elapsed, fps, m.frame_ms, m.physics_ms, m.dyn_build_ms, m.render_ms,
                     e->ball.pos.x, e->ball.pos.y, e->ball.pos.z,
-                    e->ball.speed(), e->bounces_total, e->ball.racket_hits,
+                    e->ball.speed(), e->bounces_total, e->ball.racket_hits, e->ball.net_hits,
                     rp.x, rp.y, rp.z, magnitude(rv));
         std::fflush(stdout);
     }

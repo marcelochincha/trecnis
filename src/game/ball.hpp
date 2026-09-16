@@ -11,7 +11,8 @@
 //   vel    = vel / (1 + drag * |vel| * h)            (quadratic drag, implicit)
 //   spin   = spin / (1 + spin_decay * h)             (spin bleeds to the air)
 //   pos   += vel * h
-//   -> resolve arena walls/floor, then the racket (Obb)
+//   -> resolve arena walls/floor, the table surface, the net, the backdrop
+//      wall, then the racket (Obb)
 //
 // The drag step is written in the semi-implicit form v /= (1 + k|v|h): the
 // factor is always in (0,1], so speed can only decrease and never overshoots or
@@ -66,6 +67,7 @@ struct Ball {
     float hit_speed_in     = 0.0f;  // ball |v| just before the last racket contact
     float hit_speed_out    = 0.0f;  // ball |v| just after
     float hit_racket_speed = 0.0f;  // racket |v| at that contact
+    long  net_hits         = 0;  // cumulative net contacts (telemetry)
 
     // Advance by the real frame dt. `racket`, `table` and `wall` may be
     // null. Returns the number of contacts this frame (rebounds; a settle
@@ -80,6 +82,7 @@ struct Ball {
         accum_ = 0.0f;
         racket_hits = 0;
         hit_speed_in = hit_speed_out = hit_racket_speed = 0.0f;
+        net_hits = 0;
     }
 
     float speed()     const { return magnitude(vel); }

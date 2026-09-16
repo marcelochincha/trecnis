@@ -110,6 +110,11 @@ int Ball::step_fixed(float h, const AABB& b, const Obb* racket, const Table* tab
     // still falls through to the room floor below once it clears the table).
     if (table && table->resolve(prev_y, pos, vel, radius, restitution, rest_speed)) ++c;
 
+    // Net: a finite box centred on z = 0, straddling the table's surface
+    // (Table::resolve_net). A no-op for any ball whose arc clears net_height
+    // or that is off to the side -- only an actual intersection responds.
+    if (table && table->resolve_net(pos, vel, radius, restitution)) { ++c; ++net_hits; }
+
     // Backdrop wall, flush against the table's far edge: reflects the
     // approaching (+Z) ball back toward -Z with restitution, confined to the
     // wall's finite panel (Wall::resolve). A no-op elsewhere, so a ball that

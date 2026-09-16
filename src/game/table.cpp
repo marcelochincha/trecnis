@@ -1,5 +1,7 @@
 #include <game/table.hpp>
 #include <engine/geom/shapes.hpp>
+#include <algorithm>
+#include <cmath>
 
 void Table::append_tris(std::vector<bvh::Tri>& out) const {
     const vec3 top_albedo(0.06f, 0.20f, 0.35f);
@@ -15,8 +17,8 @@ void Table::append_tris(std::vector<bvh::Tri>& out) const {
                        vec3( half_width,      height + eps, half_len), line, 0.35f);
 
     // Net.
-    geom::add_box(out, vec3(-half_width, height, -0.006f),
-                       vec3( half_width, height + net_height, 0.006f),
+    geom::add_box(out, vec3(-half_width, height, -net_thickness),
+                       vec3( half_width, height + net_height, net_thickness),
                        vec3(0.85f, 0.85f, 0.88f), 0.8f);
 
     // Four legs, so the table is not floating.
@@ -48,4 +50,50 @@ bool Table::resolve(float prev_y, vec3& pos, vec3& vel, float radius,
     if (v_in > rest_speed) { vel.y = v_in * restitution; return true; }
     vel.y = 0.0f;
     return false;
+}
+
+bool Table::resolve_net(vec3& pos, vec3& vel, float radius, float restitution) const {
+    const float y0 = height;
+    const float y1 = height + net_height;
+
+    // Cheap reject: sphere AABB vs the net's AABB (each expanded by radius).
+    if (pos.x + radius < -half_width    || pos.x - radius > half_width)    return false;
+    if (pos.y + radius < y0             || pos.y - radius > y1)            return false;
+    if (pos.z + radius < -net_thickness || pos.z - radius > net_thickness) return false;
+
+    // Closest point on the net box to the ball centre (clamp per axis).
+    vec3 closest(std::clamp(pos.x, -half_width, half_width),
+                 std::clamp(pos.y, y0, y1),
+                 std::clamp(pos.z, -net_thickness, net_thickness));
+    vec3  delta = pos - closest;
+    float dist2 = dot(delta, delta);
+    if (dist2 >= radius * radius) return false;   // still above/beside/clear of the net
+
+    vec3  n;
+    float dist = std::sqrt(dist2);
+    if (dist > 1e-6f) {
+        n = delta / dist;                         // centre is outside the box
+    } else {
+        // Centre inside the (thin) box -- eject along the least-penetrated
+        // face. For a panel this thin in Z, that is almost always Z.
+        const float ymid = (y0 + y1) * 0.5f;
+        float px = half_width    - std::fabs(pos.x);
+        float py = (y1 - y0) * 0.5f - std::fabs(pos.y - ymid);
+        float pz = net_thickness - std::fabs(pos.z);
+        if      (pz <= px && pz <= py) n = vec3(0.0f, 0.0f, pos.z < 0.0f ? -1.0f : 1.0f);
+        else if (px <= py)             n = vec3(pos.x < 0.0f ? -1.0f : 1.0f, 0.0f, 0.0f);
+        else                           n = vec3(0.0f, pos.y < ymid ? -1.0f : 1.0f, 0.0f);
+        dist = 0.0f;
+    }
+
+    // Positional correction: put the sphere just outside the net box.
+    pos = pos + n * (radius - dist);
+
+    // Reflect the ball's normal velocity component with `restitution` (the
+    // ball's own coefficient -- the net is stationary, so this is the same
+    // formula Obb::resolve uses with a zero surface velocity). Tangential
+    // velocity is left untouched (frictionless).
+    float vn = dot(vel, n);
+    if (vn < 0.0f) vel = vel - n * ((1.0f + restitution) * vn);
+    return true;
 }
