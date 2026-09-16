@@ -180,6 +180,42 @@ static RenderScene make_render_scene(Game* e) {
 // the surface -- the player's side, where the character placeholder stands.
 static const vec3 kRacketHome(0.0f, 0.95f, -1.55f);
 
+// ---------------------------------------------------------------------------
+// GAMEPLAY racket control: mouse aim (X/Y only, Z fixed this checkpoint)
+// ---------------------------------------------------------------------------
+
+// World-space reach of the racket target at the window's edge, centred on
+// kRacketHome -- deliberately modest ("no quiero sensibilidad exagerada"):
+// roughly matches racket_limits' own half-extents (x: +-1.0, y: 0.70-1.30)
+// so a full mouse swing comfortably spans the play area without needing to
+// leave the window. The final clamp to racket_limits (inside Racket::step,
+// unchanged) is still the authority -- this is just a sane default reach.
+static constexpr float kMouseReachX = 1.0f;    // world units, X, at the left/right edge
+static constexpr float kMouseReachY = 0.30f;   // world units, Y, at the top/bottom edge
+
+// Cursor position -> racket target (world X/Y around kRacketHome; Z left at
+// the racket's CURRENT depth, untouched -- Q/E do not drive Z in this mode).
+// Uses the real OS cursor position (SDL_GetMouseState), not a relative-mode
+// delta: the cursor stays visible so the player aims with it directly (see
+// game_handle_events -- GAMEPLAY mode never calls SDL_SetRelativeMouseMode,
+// that stays exclusive to the free-fly camera's own mouse-look). Window size
+// is taken from e->fb (the size the window was created with); like the rest
+// of this engine, live window resizes aren't tracked, so this assumes a
+// stable window size, same as everywhere else.
+static vec3 mouse_racket_target(Game* e) {
+    int mx = 0, my = 0;
+    SDL_GetMouseState(&mx, &my);
+    float nx = e->fb.width  > 0 ? (float)mx / (float)e->fb.width  * 2.0f - 1.0f : 0.0f;
+    float ny = e->fb.height > 0 ? (float)my / (float)e->fb.height * 2.0f - 1.0f : 0.0f;
+    nx = std::clamp(nx, -1.0f, 1.0f);
+    ny = std::clamp(ny, -1.0f, 1.0f);
+    // Screen Y grows downward; invert so moving the mouse UP moves the
+    // racket UP in world space.
+    return vec3(kRacketHome.x + nx * kMouseReachX,
+                kRacketHome.y - ny * kMouseReachY,
+                e->racket.position().z);
+}
+
 // Descriptions shown in the demo panel (index 0 = stage 1).
 static const char* kStageTitle[4] = {
     "STAGE 1 - BASIC BALL",
@@ -239,25 +275,11 @@ static void apply_demo_stage(Game* e, int stage) {
                  // under gravity + drag + spin + Magnus, unchanged.
         default:
             b.gravity = 9.81f; b.drag = 0.10f; b.magnus = 0.10f;
-            b.restitution = 0.75f;
+            b.restitution = 0.88f;
             // Serve from the player's side (z < 0, near the racket/character):
             // clears the net at full height on the outbound leg, bounces once
-            // on the far half, hits the backdrop wall, and rebounds. Found by
-            // an offline numerical search over launch parameters (same
-            // gravity/drag/restitution/table/net/wall equations as
-            // Ball::step_fixed, reimplemented read-only for the search --
-            // nothing here changes step_fixed itself): the return leg grazes
-            // the TOP of the net (a real "let"-style net contact, not a clean
-            // fly-over -- exercises Table::resolve_net's box collider, not
-            // just Table::resolve/Wall::resolve), settles into several
-            // shrinking bounces on our half, and rolls off the table's near
-            // edge into the player's zone (racket_limits z in
-            // [-1.90,-1.20]) under its own residual momentum -- no bounce is
-            // more energetic than the one before it. A launch that also
-            // bounces on OUR half before the net (the literal first step in
-            // the checkpoint's diagram) was swept broadly and never returned
-            // within the visible floor -- see the checkpoint report.
-            b.reset(vec3(0.0f, 1.5f, -1.2f), vec3(0.0f, 1.8f, 5.0f), vec3(0.0f, 0.0f, 0.0f));
+            // on the far half, hits the backdrop wall, and rebounds.
+            b.reset(vec3(0.0f, 1.5f, -1.2f), vec3(0.0f, 2.1f, 6.8f), vec3(0.0f, 0.0f, 0.0f));
             e->racket_enabled = true;
             e->table_enabled  = true;
             e->wall_enabled   = true;
@@ -472,8 +494,28 @@ void game_update(Game* e, float dt) {
 
     // Move the racket first, so the ball resolves against its new position.
     // Demo stages 1-3 disable the racket entirely.
-    if (e->racket_enabled)
-        e->racket.step(racket_input(e, dt), e->racket_limits, dt, e->racket_speed);
+    if (e->racket_enabled) {
+        // GAMEPLAY (mouse aim): chase the cursor's world-space target instead
+        // of the fixed-speed WASD direction. Still goes through Racket::step
+        // unchanged -- only how `dir` and `speed` are computed differs. The
+        // per-frame speed is capped at (distance-to-target / dt) so the
+        // racket arrives AT the target and stops instead of overshooting and
+        // jittering back and forth every frame (Racket::step always moves at
+        // exactly the `speed` given, along a re-normalized `dir` -- it has no
+        // built-in easing, so the easing has to happen here, in the speed we
+        // pass it, not in Racket itself). Autopilot (headless tests) and
+        // free-fly camera keep first refusal, same as the WASD path below.
+        if (e->racket_autopilot == 0 && !e->free_cam && e->racket_mouse_mode) {
+            vec3 to_target = mouse_racket_target(e) - e->racket.position();
+            to_target.z = 0.0f;   // Z stays fixed this checkpoint -- no depth aim yet
+            float dist = magnitude(to_target);
+            vec3  dir  = dist > 1e-4f ? to_target / dist : vec3(0.0f, 0.0f, 0.0f);
+            float step_speed = std::min(e->racket_speed, dist / std::max(dt, 1e-6f));
+            e->racket.step(dir, e->racket_limits, dt, step_speed);
+        } else {
+            e->racket.step(racket_input(e, dt), e->racket_limits, dt, e->racket_speed);
+        }
+    }
 
     // Ball::update consumes the real dt with an internal fixed physics sub-step,
     // so the trajectory is frame-rate independent (and it clamps a hitching dt
@@ -488,6 +530,20 @@ void game_update(Game* e, float dt) {
     e->sphere_mesh_.setPosition(e->ball.pos);      // raster mirrors follow
     e->racket_mesh_.setPosition(e->racket.position());
     e->metrics.physics_ms = Metrics::ema(e->metrics.physics_ms, ms_since(tp));
+
+    // Hit-window detection (preparation only -- no slow motion / charge /
+    // swing yet): true while the ball is on its way toward the player's
+    // side, inside a generous z-band around the racket's own depth range.
+    // Simple position+velocity check on the just-updated ball state, no new
+    // state machine -- matches the existing plain-bool-flag style already
+    // used for racket/table/wall enable flags above.
+    {
+        const float kHitWindowNearZ = e->racket_limits.max.z + 0.30f;   // starts a bit before the racket's own z range
+        const float kHitWindowFarZ  = e->racket_limits.min.z - 0.30f;   // ends a bit past it (ball behind the player)
+        e->hit_window = (e->ball.vel.z < 0.0f)
+                      && (e->ball.pos.z <= kHitWindowNearZ)
+                      && (e->ball.pos.z >= kHitWindowFarZ);
+    }
 
     // One line per racket contact (--debug): incoming/outgoing ball speed and
     // the racket speed at impact, to see the velocity transfer.
@@ -602,11 +658,12 @@ void game_render(Game* e, SDL_Texture* sdl_fb_texture, float dt) {
         vec3 rp = e->racket.position(), rv = e->racket.velocity();
         std::printf("[perf] t=%5.1fs | fps %3.0f | frame %5.2f ms | physics %.3f | dynBVH %.3f | render %5.2f "
                     "| ball(%.2f,%.2f,%.2f) |v|=%.2f bounces %d racket %ld net %ld "
-                    "| rkt(%.2f,%.2f,%.2f) |vr|=%.2f\n",
+                    "| rkt(%.2f,%.2f,%.2f) |vr|=%.2f ctrl=%s hitwin=%d\n",
                     elapsed, fps, m.frame_ms, m.physics_ms, m.dyn_build_ms, m.render_ms,
                     e->ball.pos.x, e->ball.pos.y, e->ball.pos.z,
                     e->ball.speed(), e->bounces_total, e->ball.racket_hits, e->ball.net_hits,
-                    rp.x, rp.y, rp.z, magnitude(rv));
+                    rp.x, rp.y, rp.z, magnitude(rv),
+                    e->racket_mouse_mode ? "mouse" : "wasd", e->hit_window ? 1 : 0);
         std::fflush(stdout);
     }
 
@@ -629,7 +686,7 @@ void game_render(Game* e, SDL_Texture* sdl_fb_texture, float dt) {
             "Model   : g %.2f  e %.2f  drag %.2f  magnus %.2f  (1/240 s)\n"
             "Racket  : p(%.1f, %.1f, %.1f)  v(%.1f, %.1f, %.1f)  hits: %ld%s\n"
             "Impact  : ball |v| %.2f -> %.2f   racket |v| %.2f\n"
-            "Racket  : WASD / arrows = X/Y   Q/E = Z\n"
+            "Control : %s   [M] toggle   Hit window: %s\n"
             "Camera  : C = toggle free-fly (mouse-look, WASD/Q/E, wheel)   [ESC] quit",
             e->renderer.current_name(),
             e->renderer.current_available() ? "" : " (n/a)",
@@ -643,7 +700,9 @@ void game_render(Game* e, SDL_Texture* sdl_fb_texture, float dt) {
             e->ball.gravity, e->ball.restitution, e->ball.drag, e->ball.magnus,
             rp.x, rp.y, rp.z, rv.x, rv.y, rv.z, e->ball.racket_hits,
             e->racket_autopilot == 1 ? "  [chase]" : e->racket_autopilot == 2 ? "  [recede]" : "",
-            e->ball.hit_speed_in, e->ball.hit_speed_out, e->ball.hit_racket_speed);
+            e->ball.hit_speed_in, e->ball.hit_speed_out, e->ball.hit_racket_speed,
+            e->racket_mouse_mode ? "GAMEPLAY (mouse aims X/Y)" : "DEBUG/MANUAL (WASD/arrows=X/Y, Q/E=Z)",
+            e->hit_window ? "yes" : "no");
 
         draw_text(e->fb, 11, 11, hud, 0xAA000000, 0xAA000000);
         draw_text(e->fb, 10, 10, hud, 0xFFFFFFFF);
@@ -679,6 +738,19 @@ void game_handle_events(Game* e, SDL_Event& event, bool& running) {
         std::cout << "Camera: " << (e->free_cam
             ? "FREE  (mouse-look, WASD move, Q/E up/down, wheel = speed)"
             : "FIXED (WASD / Q/E control the racket)") << "\n";
+        return;
+    }
+
+    // M toggles the racket's control mode: GAMEPLAY (mouse aims X/Y, cursor
+    // stays visible -- no relative mouse mode, unlike C's free-fly) versus
+    // DEBUG/MANUAL (the original WASD/arrows + Q/E path, untouched). Doesn't
+    // interact with C: free-fly still takes the keyboard/mouse for itself
+    // regardless of this flag (see racket_input / game_update).
+    if (k == SDLK_m) {
+        e->racket_mouse_mode = !e->racket_mouse_mode;
+        std::cout << "Racket control: " << (e->racket_mouse_mode
+            ? "GAMEPLAY (mouse aims X/Y, Z fixed)"
+            : "DEBUG/MANUAL (WASD / arrows = X/Y, Q/E = Z)") << "\n";
         return;
     }
 
