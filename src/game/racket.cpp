@@ -1,5 +1,7 @@
 #include <game/racket.hpp>
+#include <engine/assets/obj_loader.hpp>   // load_obj_tris -- the project's only mesh-import path
 #include <algorithm>
+#include <limits>
 
 // Emit an oriented box (centre `c`, orthonormal axes `R`, half-extents `half`)
 // as 12 shaded triangles. Same corner indexing / winding as geom::add_box, with
@@ -68,4 +70,54 @@ void Racket::recenter(const vec3& p) {
 
 void Racket::append_local_tris(std::vector<bvh::Tri>& out) const {
     add_oriented_box(out, vec3(0.0f, 0.0f, 0.0f), obb_.axis, obb_.half, albedo_, 0.35f);
+}
+
+void Racket::append_local_tris_from_obj(const std::string& path, std::vector<bvh::Tri>& out) const {
+    std::vector<bvh::Tri> raw;
+    load_obj_tris(path.c_str(), vec3(0.0f, 0.0f, 0.0f), 1.0f, albedo_, 0.35f, raw);
+    if (raw.empty()) { append_local_tris(out); return; }   // no asset yet -- keep the primitive box
+
+    // Auto-fit: centre the loaded model on its own bounding-box centre and
+    // uniformly rescale it so its largest dimension matches `size_`'s
+    // largest dimension -- whatever scale/units the asset was authored in,
+    // it ends up sized like the paddle it's replacing.
+    vec3 mn( std::numeric_limits<float>::max(),  std::numeric_limits<float>::max(),  std::numeric_limits<float>::max());
+    vec3 mx(-std::numeric_limits<float>::max(), -std::numeric_limits<float>::max(), -std::numeric_limits<float>::max());
+    for (const bvh::Tri& t : raw) {
+        const vec3 verts[3] = { t.v0, t.v1, t.v2 };
+        for (const vec3& v : verts) {
+            mn.x = std::min(mn.x, v.x); mn.y = std::min(mn.y, v.y); mn.z = std::min(mn.z, v.z);
+            mx.x = std::max(mx.x, v.x); mx.y = std::max(mx.y, v.y); mx.z = std::max(mx.z, v.z);
+        }
+    }
+    const vec3  center        = (mn + mx) * 0.5f;
+    const vec3  extent        = mx - mn;
+    const float model_extent  = std::max(extent.x, std::max(extent.y, extent.z));
+    const float target_extent = std::max(size_.x,  std::max(size_.y,  size_.z));
+    const float fit           = (model_extent > 1e-6f) ? target_extent / model_extent : 1.0f;
+
+    // Same placement rule append_local_tris' box already uses (P() in
+    // add_oriented_box): rotate an origin-centred local-space point by the
+    // configured orientation (obb_.axis). Only translate-only, uniform
+    // scale is applied before the rotation, so normals need the SAME
+    // rotation with no inverse-transpose correction.
+    auto place = [&](const vec3& v) {
+        const vec3 local = (v - center) * fit;
+        return obb_.axis[0] * local.x + obb_.axis[1] * local.y + obb_.axis[2] * local.z;
+    };
+    auto orient = [&](const vec3& n) {
+        return obb_.axis[0] * n.x + obb_.axis[1] * n.y + obb_.axis[2] * n.z;
+    };
+
+    out.reserve(out.size() + raw.size());
+    for (bvh::Tri t : raw) {
+        t.v0 = place(t.v0); t.v1 = place(t.v1); t.v2 = place(t.v2);
+        t.normal = normalize(orient(t.normal));
+        if (t.smooth) {
+            t.n0 = normalize(orient(t.n0));
+            t.n1 = normalize(orient(t.n1));
+            t.n2 = normalize(orient(t.n2));
+        }
+        out.push_back(t);
+    }
 }

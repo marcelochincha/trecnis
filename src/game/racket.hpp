@@ -11,6 +11,7 @@
 // from the movement for telemetry only — it is NOT fed into the ball's collision
 // response this checkpoint.
 
+#include <string>
 #include <vector>
 #include <math/sr_math.hpp>
 #include <render/raytrace/bvh.hpp>   // bvh::Tri
@@ -35,6 +36,22 @@ public:
     // 12 shaded triangles: box centred at the ORIGIN with the configured
     // orientation baked in. The caller adds position() each frame.
     void append_local_tris(std::vector<bvh::Tri>& out) const;
+
+    // Visual-only alternative to append_local_tris: loads a real racket
+    // model (OBJ, via engine/assets/obj_loader's load_obj_tris -- the only
+    // mesh-import path this project already has) instead of the primitive
+    // box, in the SAME local space: origin-centred, with the configured
+    // orientation (the same rotation append_local_tris' box already uses)
+    // baked in, so the caller can translate-only by position() every frame
+    // exactly as before. The model is auto-centred on its own bounding box
+    // and uniformly rescaled to roughly match `size`, so it doesn't need to
+    // be authored at any particular scale -- but it DOES need +Z as the
+    // blade's hitting face (matches face_normal()), +Y "up" toward the
+    // head, +X lateral, i.e. the same local axes the box already uses.
+    // Falls back to append_local_tris (the primitive box) if `path` can't
+    // be loaded, so a missing asset never breaks the scene. Purely visual:
+    // never touches obb_ or any other physics state.
+    void append_local_tris_from_obj(const std::string& path, std::vector<bvh::Tri>& out) const;
 
     const Obb&  collider()    const { return obb_; }
     vec3        position()    const { return pos_; }

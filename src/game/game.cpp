@@ -180,6 +180,13 @@ static RenderScene make_render_scene(Game* e) {
 // the surface -- the player's side, where the character placeholder stands.
 static const vec3 kRacketHome(0.0f, 0.95f, -1.55f);
 
+// Real racket model, loaded through the project's existing (and until now
+// unused) OBJ pipeline -- engine/assets/obj_loader.hpp -- rather than the
+// primitive box. See res/models/README.md for exactly what to place here;
+// Racket::append_local_tris_from_obj falls back to the box on its own if
+// this file is missing, so nothing breaks before that asset exists.
+static const char* kRacketModelPath = "res/models/racket.obj";
+
 // ---------------------------------------------------------------------------
 // GAMEPLAY racket control: mouse aim (X/Y only, Z fixed this checkpoint)
 // ---------------------------------------------------------------------------
@@ -529,7 +536,12 @@ void game_init(Game* e) {
                      e->sphere_albedo, /*rough*/ 0.55f, /*metal*/ 0.0f, /*ior*/ 1.5f,
                      /*slices*/ 20, /*stacks*/ 14, /*smooth*/ true);
     e->racket_local_.clear();
-    e->racket.append_local_tris(e->racket_local_);         // 12 tris, orientation baked
+    // Real racket model if res/models/racket.obj exists (see res/models/README.md
+    // for the asset spec); falls back to the primitive box otherwise -- either
+    // way the result is local-space, origin-centred, orientation already baked
+    // in (see Racket::append_local_tris_from_obj), so refresh_dyn_tris below
+    // still only needs to translate it by position() every frame, unchanged.
+    e->racket.append_local_tris_from_obj(kRacketModelPath, e->racket_local_);
 
     e->dyn_tris_.clear();
     e->dyn_tris_.reserve(e->sphere_local_.size() + e->racket_local_.size());
