@@ -193,6 +193,12 @@ static const vec3 kRacketHome(0.0f, 0.95f, -1.55f);
 static constexpr float kMouseReachX = 1.0f;    // world units, X, at the left/right edge
 static constexpr float kMouseReachY = 0.30f;   // world units, Y, at the top/bottom edge
 
+// Hit window: slow motion + charge tunables (see game_update). Preparation
+// only this checkpoint -- charge is not yet used to affect the ball.
+static constexpr float kHitWindowTimeScale = 0.2f;   // dt multiplier for Ball::update while hit_window is open
+static constexpr float kTimeScaleLerpRate  = 8.0f;   // 1/s; how fast time_scale eases toward its target (real dt, not scaled)
+static constexpr float kChargeRate         = 1.0f;   // units/s; charge 0->1 in ~1 real second while LMB is held
+
 // Cursor position -> racket target (world X/Y around kRacketHome; Z left at
 // the racket's CURRENT depth, untouched -- Q/E do not drive Z in this mode).
 // Uses the real OS cursor position (SDL_GetMouseState), not a relative-mode
@@ -517,12 +523,32 @@ void game_update(Game* e, float dt) {
         }
     }
 
-    // Ball::update consumes the real dt with an internal fixed physics sub-step,
-    // so the trajectory is frame-rate independent (and it clamps a hitching dt
+    // Hit-window slow motion: ease time_scale toward its target (0.2 inside
+    // the window from last frame, 1.0 outside) using the REAL dt -- the
+    // transition itself must not be scaled, or leaving the window would take
+    // just as long (in slowed time) as entering it, instead of recovering at
+    // normal speed. Only the dt handed to Ball::update below is multiplied
+    // by the result: Ball::step_fixed, its fixed sub-step and every equation
+    // in it are completely untouched -- slow motion here just means "consume
+    // real time more slowly", i.e. fewer fixed sub-steps per real second,
+    // not different physics.
+    {
+        const float target = e->hit_window ? kHitWindowTimeScale : 1.0f;
+        const float rate   = std::clamp(kTimeScaleLerpRate * dt, 0.0f, 1.0f);
+        e->time_scale += (target - e->time_scale) * rate;
+    }
+    const float sim_dt = dt * e->time_scale;
+
+    // Ball::update consumes sim_dt (real dt scaled by time_scale) with its own
+    // internal fixed physics sub-step, so the trajectory stays frame-rate
+    // independent regardless of time_scale (and it clamps a hitching dt
     // itself — no spiral of death). The racket collider carries its velocity, so
     // the ball's contact response depends on the ball-vs-racket relative motion.
+    // The racket itself was already stepped above using the REAL dt (not
+    // sim_dt) -- the player's own aim/reaction stays at normal speed while
+    // only the ball's flight is slowed, which is the point of the window.
     uint64_t tp = SDL_GetPerformanceCounter();
-    e->bounces_total += e->ball.update(dt, e->arena,
+    e->bounces_total += e->ball.update(sim_dt, e->arena,
                                        e->racket_enabled ? &e->racket.collider() : nullptr,
                                        e->table_enabled  ? &e->table            : nullptr,
                                        e->wall_enabled   ? &e->wall             : nullptr);
@@ -543,6 +569,20 @@ void game_update(Game* e, float dt) {
         e->hit_window = (e->ball.vel.z < 0.0f)
                       && (e->ball.pos.z <= kHitWindowNearZ)
                       && (e->ball.pos.z >= kHitWindowFarZ);
+    }
+
+    // Charge: accumulates at a fixed real-time rate while LMB is held AND
+    // the window is still open (caso 2); if the window closes while still
+    // held, the in-progress charge is cancelled outright rather than kept
+    // (caso 3 -- an interrupted charge is not a "final" one). Uses the REAL
+    // dt, same reasoning as the racket above: charging is a player action,
+    // not part of the slowed simulation. No new value transfer to the ball
+    // yet -- charge is only stored for a later checkpoint.
+    if (!e->hit_window && e->charging) {
+        e->charging = false;
+        e->charge   = 0.0f;
+    } else if (e->charging) {
+        e->charge = std::clamp(e->charge + kChargeRate * dt, 0.0f, 1.0f);
     }
 
     // One line per racket contact (--debug): incoming/outgoing ball speed and
@@ -658,12 +698,13 @@ void game_render(Game* e, SDL_Texture* sdl_fb_texture, float dt) {
         vec3 rp = e->racket.position(), rv = e->racket.velocity();
         std::printf("[perf] t=%5.1fs | fps %3.0f | frame %5.2f ms | physics %.3f | dynBVH %.3f | render %5.2f "
                     "| ball(%.2f,%.2f,%.2f) |v|=%.2f bounces %d racket %ld net %ld "
-                    "| rkt(%.2f,%.2f,%.2f) |vr|=%.2f ctrl=%s hitwin=%d\n",
+                    "| rkt(%.2f,%.2f,%.2f) |vr|=%.2f ctrl=%s hitwin=%d ts=%.2f charge=%.2f(%d)\n",
                     elapsed, fps, m.frame_ms, m.physics_ms, m.dyn_build_ms, m.render_ms,
                     e->ball.pos.x, e->ball.pos.y, e->ball.pos.z,
                     e->ball.speed(), e->bounces_total, e->ball.racket_hits, e->ball.net_hits,
                     rp.x, rp.y, rp.z, magnitude(rv),
-                    e->racket_mouse_mode ? "mouse" : "wasd", e->hit_window ? 1 : 0);
+                    e->racket_mouse_mode ? "mouse" : "wasd", e->hit_window ? 1 : 0,
+                    e->time_scale, e->charge, e->charging ? 1 : 0);
         std::fflush(stdout);
     }
 
@@ -672,7 +713,17 @@ void game_render(Game* e, SDL_Texture* sdl_fb_texture, float dt) {
     } else if (e->show_hud) {
 
         vec3 rp = e->racket.position(), rv = e->racket.velocity();
-        char hud[800];
+
+        // Minimal ASCII power bar (10 chars) -- no new render primitives, no
+        // per-frame allocation, just text through the existing draw_text HUD.
+        char power_bar[11];
+        {
+            int filled = (int)(e->charge * 10.0f + 0.5f);
+            for (int i = 0; i < 10; ++i) power_bar[i] = (i < filled) ? '#' : '-';
+            power_bar[10] = '\0';
+        }
+
+        char hud[1024];
         std::snprintf(hud, sizeof(hud),
             "PingPong RT  -  racket velocity transfer\n"
             "Backend : %s%s   (TAB / G to cycle)\n"
@@ -686,7 +737,8 @@ void game_render(Game* e, SDL_Texture* sdl_fb_texture, float dt) {
             "Model   : g %.2f  e %.2f  drag %.2f  magnus %.2f  (1/240 s)\n"
             "Racket  : p(%.1f, %.1f, %.1f)  v(%.1f, %.1f, %.1f)  hits: %ld%s\n"
             "Impact  : ball |v| %.2f -> %.2f   racket |v| %.2f\n"
-            "Control : %s   [M] toggle   Hit window: %s\n"
+            "Control : %s   [M] toggle\n"
+            "HIT WINDOW: %s   POWER: [%s] %3.0f%%   TIME SCALE: %.2f / 1.00\n"
             "Camera  : C = toggle free-fly (mouse-look, WASD/Q/E, wheel)   [ESC] quit",
             e->renderer.current_name(),
             e->renderer.current_available() ? "" : " (n/a)",
@@ -702,7 +754,7 @@ void game_render(Game* e, SDL_Texture* sdl_fb_texture, float dt) {
             e->racket_autopilot == 1 ? "  [chase]" : e->racket_autopilot == 2 ? "  [recede]" : "",
             e->ball.hit_speed_in, e->ball.hit_speed_out, e->ball.hit_racket_speed,
             e->racket_mouse_mode ? "GAMEPLAY (mouse aims X/Y)" : "DEBUG/MANUAL (WASD/arrows=X/Y, Q/E=Z)",
-            e->hit_window ? "yes" : "no");
+            e->hit_window ? "YES" : "NO", power_bar, e->charge * 100.0f, e->time_scale);
 
         draw_text(e->fb, 11, 11, hud, 0xAA000000, 0xAA000000);
         draw_text(e->fb, 10, 10, hud, 0xFFFFFFFF);
@@ -724,6 +776,24 @@ void game_handle_events(Game* e, SDL_Event& event, bool& running) {
         }
         return;
     }
+
+    // LMB charges hit power, but only while a hit window is actually open
+    // (and not while free-fly owns the mouse). Starting the charge is an
+    // edge (button-down) event, same as every other discrete control in
+    // this function; the charge VALUE itself increases continuously in
+    // game_update while e->charging stays true (see there). Releasing just
+    // stops the increase -- the reached value stays in e->charge ("guardar
+    // el charge final") until either the next charge overwrites it or
+    // hit_window closes mid-charge and cancels it (also in game_update).
+    if (event.type == SDL_MOUSEBUTTONDOWN && event.button.button == SDL_BUTTON_LEFT) {
+        if (e->hit_window && !e->free_cam) e->charging = true;
+        return;
+    }
+    if (event.type == SDL_MOUSEBUTTONUP && event.button.button == SDL_BUTTON_LEFT) {
+        e->charging = false;
+        return;
+    }
+
     if (event.type != SDL_KEYDOWN) return;
 
     const SDL_Keycode k = event.key.keysym.sym;
