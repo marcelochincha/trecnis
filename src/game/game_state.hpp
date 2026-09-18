@@ -37,6 +37,7 @@
 
 struct Metrics {
     double frame_ms   = 0.0;
+    double update_ms   = 0.0;
     double physics_ms  = 0.0;
     double dyn_build_ms = 0.0;
     double render_ms   = 0.0;

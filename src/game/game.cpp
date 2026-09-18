@@ -628,6 +628,8 @@ static vec3 racket_input(Game* e, float ) {
 }
 
 void game_update(Game* e, float dt) {
+    uint64_t tu0 = SDL_GetPerformanceCounter();
+
     update_camera(e, dt);
 
 
@@ -734,6 +736,8 @@ void game_update(Game* e, float dt) {
     }
 
 
+    e->metrics.update_ms = Metrics::ema(e->metrics.update_ms, ms_since(tu0));
+
     uint64_t tb = SDL_GetPerformanceCounter();
     e->dynamic_bvh.build(e->dyn_tris_, e->dynamic_strategy);
     e->metrics.dyn_build_ms = Metrics::ema(e->metrics.dyn_build_ms, ms_since(tb));
@@ -834,10 +838,12 @@ void game_render(Game* e, SDL_Texture* sdl_fb_texture, float dt) {
     if (global_config.debug_mode && elapsed >= next_log) {
         next_log += 2.0;
         vec3 rp = e->racket.position(), rv = e->racket.velocity();
-        std::printf("[perf] t=%5.1fs | fps %3.0f | frame %5.2f ms | physics %.3f | dynBVH %.3f | render %5.2f "
+        std::printf("[perf] t=%5.1fs | fps %3.0f | frame %5.2f ms | update %5.3f | draw %5.3f (bvh %.3f + render %.3f) "
+                    "| physics %.3f "
                     "| ball(%.2f,%.2f,%.2f) |v|=%.2f bounces %d racket %ld net %ld swing %ld "
                     "| rkt(%.2f,%.2f,%.2f) |vr|=%.2f ctrl=%s hitwin=%d ts=%.2f charge=%.2f(%d)\n",
-                    elapsed, fps, m.frame_ms, m.physics_ms, m.dyn_build_ms, m.render_ms,
+                    elapsed, fps, m.frame_ms, m.update_ms, m.dyn_build_ms + m.render_ms, m.dyn_build_ms, m.render_ms,
+                    m.physics_ms,
                     e->ball.pos.x, e->ball.pos.y, e->ball.pos.z,
                     e->ball.speed(), e->bounces_total, e->ball.racket_hits, e->ball.net_hits, e->ball.swing_hits,
                     rp.x, rp.y, rp.z, magnitude(rv),
@@ -876,8 +882,8 @@ void game_render(Game* e, SDL_Texture* sdl_fb_texture, float dt) {
             "PingPong RT  -  racket velocity transfer\n"
             "Backend : %s%s   (TAB / G to cycle)\n"
             "FPS     : %.0f      Frame : %.2f ms\n"
-            "Physics : %.3f ms   Dyn BVH build : %.3f ms\n"
-            "Render  : %.2f ms   (traversal + shading)\n"
+            "Update  : %.3f ms   (state + game logic, physics %.3f)\n"
+            "Draw    : %.3f ms   (dyn BVH build %.3f + render %.3f)\n"
             "Tris    : %zu static + %zu dynamic = %zu\n"
             "Rays    : %zu primary / frame\n"
             "Ball    : p(%.1f, %.1f, %.1f)  speed %.2f  bounces: %d\n"
@@ -892,8 +898,8 @@ void game_render(Game* e, SDL_Texture* sdl_fb_texture, float dt) {
             e->renderer.current_name(),
             e->renderer.current_available() ? "" : " (n/a)",
             fps, m.frame_ms,
-            m.physics_ms, m.dyn_build_ms,
-            m.render_ms,
+            m.update_ms, m.physics_ms,
+            m.dyn_build_ms + m.render_ms, m.dyn_build_ms, m.render_ms,
             e->static_bvh.triangle_count(), e->dynamic_bvh.triangle_count(), tris,
             m.primary_rays,
             e->ball.pos.x, e->ball.pos.y, e->ball.pos.z, e->ball.speed(), e->bounces_total,
