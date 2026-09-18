@@ -42,7 +42,7 @@ bool load_png_texture(const std::string &filename, texture &m, int max_size)
 
     for (int y = 0; y < dst_h; ++y)
     {
-        int src_y = tex_height - 1 - (int)(y * sy); // flip Y
+        int src_y = tex_height - 1 - (int)(y * sy);
         for (int x = 0; x < dst_w; ++x)
         {
             int src_x   = (int)(x * sx);

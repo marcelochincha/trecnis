@@ -79,9 +79,9 @@ static vec2 tri_interp_uv(const bvh::Tri& tr, const vec3& P) {
 
 static vec3 reflect_dir(vec3 d, vec3 n) { return d - n * (2.0f * dot(d, n)); }
 
-// Deterministic per-surface-point hash (no RNG state, stable across frames):
-// used to rotate the fixed GI sample set so neighbouring points don't share the
-// exact same directions (breaks banding without introducing temporal noise).
+
+
+
 static uint32_t hash_pos(const vec3& p) {
     auto bits = [](float f){ uint32_t u; std::memcpy(&u, &f, 4); return u; };
     uint32_t h = bits(p.x) * 73856093u ^ bits(p.y) * 19349663u ^ bits(p.z) * 83492791u;
@@ -89,8 +89,8 @@ static uint32_t hash_pos(const vec3& p) {
     return h;
 }
 
-// Van der Corput radical inverse base 2 — the second Hammersley coordinate for
-// a low-discrepancy, well-spread set of hemisphere directions.
+
+
 static float radinv2(uint32_t i) {
     i = (i << 16) | (i >> 16);
     i = ((i & 0x55555555u) << 1) | ((i & 0xAAAAAAAAu) >> 1);
@@ -108,7 +108,7 @@ vec3 trace_ray(const ray& r, const RenderScene& scene, int depth) {
 
     const bvh::Tri& tr = *hit.tri;
 
-    // Emissive surfaces are the lights themselves: read out their emission.
+
     if (tr.emission.x + tr.emission.y + tr.emission.z > 0.0f)
         return tr.emission;
 
@@ -117,18 +117,18 @@ vec3 trace_ray(const ray& r, const RenderScene& scene, int depth) {
     vec3 N      = tr.smooth ? tri_smooth_normal(tr, P) : tr.normal;
     if (dot(N, r.direction) > 0.0f) N = -N;
 
-    // Use texture albedo if available, otherwise fall back to material color
+
     vec3 albedo = tr.albedo;
     if (tr.tex) {
         vec2 uv = tri_interp_uv(tr, P);
         albedo = sample_face(*tr.tex, uv.x, uv.y);
     }
 
-    // ---- Direct lighting (deterministic, hard shadows) ---------------------
-    // Ambient fill + an optional directional sun, then every area light treated
-    // as a point light at its centroid. No random sampling, so every shadow is
-    // hard and the image is noise-free — classic ray tracing, not path tracing.
-    float mono = AMBIENT;   // grey ambient + sun term
+
+
+
+
+    float mono = AMBIENT;
     if (scene.sun_enabled) {
         ray shadow(P + N_geom * SHADOW_EPS, SUN_DIR);
         if (!scene.accel->occluded(shadow.origin, shadow.direction, 1e30f))
@@ -137,7 +137,7 @@ vec3 trace_ray(const ray& r, const RenderScene& scene, int depth) {
 
     vec3 light_color(mono, mono, mono);
     if (scene.emissive) for (const bvh::Tri& lt : *scene.emissive) {
-        vec3  lp    = (lt.v0 + lt.v1 + lt.v2) * (1.0f / 3.0f);  // centroid
+        vec3  lp    = (lt.v0 + lt.v1 + lt.v2) * (1.0f / 3.0f);
         vec3  ldir  = lp - P;
         float ldist = std::sqrt(dot(ldir, ldir));
         if (ldist < 1e-4f) continue;
@@ -153,8 +153,8 @@ vec3 trace_ray(const ray& r, const RenderScene& scene, int depth) {
         light_color = light_color + lt.emission * (NdotL * G);
     }
 
-    // Dynamic point lights: same deterministic treatment as the area lights —
-    // one hard shadow ray, inverse-square falloff, no geometry so they can move.
+
+
     if (scene.point_lights) {
         for (const PointLight& pl : *scene.point_lights) {
             vec3  ldir  = pl.pos - P;
@@ -175,14 +175,14 @@ vec3 trace_ray(const ray& r, const RenderScene& scene, int depth) {
                        albedo.y * light_color.y,
                        albedo.z * light_color.z) * k_d;
 
-    // ---- Indirect diffuse (deterministic one-bounce GI) --------------------
-    // Only from the camera-primary diffuse hit (depth == 0), so it is exactly
-    // one bounce and never recurses. A fixed, cosine-weighted set of hemisphere
-    // directions (Hammersley), rotated per surface point by a position hash so
-    // the pattern doesn't band — no RNG, so no fireflies and no temporal flicker.
-    // Each sample gathers the DIRECT lighting of whatever it hits (secondary
-    // call is forced terminal via a large depth: no specular, no further GI),
-    // which is how the moving point light bleeds colour onto nearby surfaces.
+
+
+
+
+
+
+
+
     if (scene.gi_enabled && depth == 0 && k_d > 0.0f && tr.metallic < 0.5f) {
         vec3 T = normalize(std::fabs(N.x) > 0.9f ? cross(N, vec3(0, 1, 0))
                                                  : cross(N, vec3(1, 0, 0)));

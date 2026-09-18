@@ -1,14 +1,14 @@
 #pragma once
 
-// Thin wrapper over Intel Embree: builds Embree's own BVH over the SAME
-// triangles our BVH uses, exposing nearest-hit and occlusion queries. Used by
-// EmbreeAccel to serve the Embree render backend. Compiled only when
-// WITH_EMBREE is defined; otherwise this header is empty and the backend is
-// simply absent from the runtime toggle.
+
+
+
+
+
 #ifdef WITH_EMBREE
 
 #include <embree4/rtcore.h>
-#include <render/raytrace/bvh.hpp>      // bvh::Tri, vec3
+#include <render/raytrace/bvh.hpp>
 #include <vector>
 
 namespace embree_ref {
@@ -26,9 +26,9 @@ public:
     Scene(const Scene&)            = delete;
     Scene& operator=(const Scene&) = delete;
 
-    // Build an Embree triangle geometry over `tris` and commit (which builds
-    // Embree's internal BVH). Build quality is mapped from our strategy:
-    // SAH -> HIGH, Median -> MEDIUM, Morton -> LOW.
+
+
+
     void build(const std::vector<bvh::Tri>& tris, bvh::BuildStrategy strategy = bvh::SAH) {
         rtcReleaseScene(sc_);
         sc_ = rtcNewScene(dev_);
@@ -40,7 +40,7 @@ public:
         rtcSetSceneBuildQuality(sc_, q);
         if (tris.empty()) { rtcCommitScene(sc_); return; }
 
-        verts_.resize(tris.size() * 3 * 3);   // 3 verts * 3 floats per triangle
+        verts_.resize(tris.size() * 3 * 3);
         idx_.resize(tris.size() * 3);
         for (size_t i = 0; i < tris.size(); ++i) {
             const bvh::Tri& t = tris[i];
@@ -62,10 +62,10 @@ public:
         rtcCommitGeometry(geom);
         rtcAttachGeometry(sc_, geom);
         rtcReleaseGeometry(geom);
-        rtcCommitScene(sc_);   // <- builds Embree's BVH
+        rtcCommitScene(sc_);
     }
 
-    // Nearest hit. Returns true and fills distance + primitive id on hit.
+
     bool intersect(const vec3& o, const vec3& d, float& t, unsigned& prim) const {
         RTCRayHit rh;
         rh.ray.org_x = o.x; rh.ray.org_y = o.y; rh.ray.org_z = o.z;
@@ -82,7 +82,7 @@ public:
         return true;
     }
 
-    // Any-hit query capped to max_t, used by shadow rays.
+
     bool occluded(const vec3& o, const vec3& d, float max_t) const {
         RTCRay r;
         r.org_x = o.x; r.org_y = o.y; r.org_z = o.z;
@@ -98,9 +98,9 @@ public:
 private:
     RTCDevice          dev_ = nullptr;
     RTCScene           sc_  = nullptr;
-    std::vector<float> verts_;   // backing storage kept alive for the geometry
+    std::vector<float> verts_;
     std::vector<unsigned> idx_;
 };
 
-} // namespace embree_ref
-#endif // WITH_EMBREE
+}
+#endif

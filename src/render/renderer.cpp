@@ -1,8 +1,8 @@
 #include <render/renderer.hpp>
 #include <render/raytrace/bvh_accel.hpp>
-#include <render/raytrace/sr_raytrace.hpp>   // SUN_DIR, camera math via render_scene
+#include <render/raytrace/sr_raytrace.hpp>
 #include <render/raytrace/sr_ocl.hpp>
-#include <render/raster/sr_raster.hpp>     // render_mesh / render_skybox (raster backend)
+#include <render/raster/sr_raster.hpp>
 #include <cmath>
 
 #ifdef WITH_EMBREE
@@ -11,9 +11,9 @@
 
 namespace {
 
-// ---- Raster backend ---------------------------------------------------------
-// The CPU forward rasterizer as a first-class backend. Draws the skybox, each
-// RasterItem flat-shaded, then projected planar shadows for shadow-casters.
+
+
+
 class RasterBackend : public IRenderBackend {
 public:
     const char* name() const override { return "RASTER"; }
@@ -29,46 +29,46 @@ public:
         for (const RasterItem& it : *s.raster_items) {
             if (!it.geo) continue;
             cfg.baseColor = it.color;
-            cfg.tex = const_cast<texture*>(it.geo->tex);  // flat colour when null
+            cfg.tex = const_cast<texture*>(it.geo->tex);
             render_mesh(fb, cam, *it.geo, cfg);
         }
-        //draw_shadows(s, fb, cam);
+
     }
 
 private:
-    // Squash shadow-casters onto the ground plane along SUN_DIR and draw them
-    // flat dark. Same projective-shadow trick the old raster path used.
-    // static void draw_shadows(RenderScene& s, framebuffer& fb, const camera& cam) {
-    //     const vec3  L       = SUN_DIR;
-    //     const float plane_y = 0.02f;
-    //     mat4 S(1.0f);
-    //     S(0,1) = -L.x/L.y;  S(1,1) = 0.0f;  S(2,1) = -L.z/L.y;
-    //     S(0,3) = (L.x/L.y)*plane_y;  S(1,3) = plane_y;  S(2,3) = (L.z/L.y)*plane_y;
 
-    //     renderConfig scfg;
-    //     scfg.baseColor = 0xFF1A1A1A;
-    //     scfg.ignoreLight = true;
 
-    //     mesh tmp;
-    //     for (const RasterItem& it : *s.raster_items) {
-    //         if (!it.geo || !it.shadow) continue;
-    //         const mesh& m = *it.geo;
-    //         mat4 MS = S * m.modelMatrix();
-    //         tmp.vertices.clear();
-    //         tmp.vertices.reserve(m.vertices.size());
-    //         for (const vertex& v : m.vertices) {
-    //             vec4 w = MS * v.p;
-    //             tmp.vertices.push_back({ vec3(w.x,w.y,w.z), v.t });
-    //         }
-    //         tmp.faces = m.faces;
-    //         tmp._modelMatrixDirty = true;
-    //         tmp.inverseFaces = false; render_mesh(fb, cam, tmp, scfg);
-    //         tmp.inverseFaces = true;  render_mesh(fb, cam, tmp, scfg);
-    //     }
-    // }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 };
 
-// ---- CPU SAH BVH backend ----------------------------------------------------
+
 
 class CpuBvhBackend : public IRenderBackend {
 public:
@@ -111,7 +111,7 @@ private:
 };
 #endif
 
-// ---- OpenCL GPU backend -----------------------------------------------------
+
 
 class OpenClBackend : public IRenderBackend {
 public:
@@ -154,8 +154,8 @@ public:
         mat4 R = s.cam->rotation();
         vec4 cx = R * vec4(1, 0, 0, 0), cy = R * vec4(0, 1, 0, 0), cz = R * vec4(0, 0, 1, 0);
         float tb = tanf(to_radians(s.cam->_fov) * 0.5f), ta = tb / s.cam->_aspectRatio;
-        // The GPU path is still a Monte Carlo kernel; run a fixed sample count so
-        // it stays usable now that the app no longer exposes an spp control.
+
+
         const int kOclSamples = 8;
         ocl::render(s.cam->_position.x, s.cam->_position.y, s.cam->_position.z,
                     cx.x, cx.y, cx.z, cy.x, cy.y, cy.z, cz.x, cz.y, cz.z,
@@ -165,8 +165,8 @@ public:
     }
 
 private:
-    // Pack area-light triangles into the flat 32-float/tri layout the kernel
-    // expects for next-event estimation (only v0/v1/v2, face normal, emission).
+
+
     static void upload_emissive(const std::vector<bvh::Tri>& tris) {
         if (!ocl::available()) return;
         std::vector<float> tf(tris.size() * 32, 0.0f);
@@ -183,19 +183,19 @@ private:
     }
 };
 
-} // namespace
+}
 
-// ---- Renderer ---------------------------------------------------------------
+
 
 void Renderer::init(int num_workers, int max_bounces, float ambient, float shadow_eps) {
     cpu_.start(num_workers);
-    backends_.push_back(new RasterBackend());        // 0: always-available fallback
-    backends_.push_back(new CpuBvhBackend(cpu_));     // 1: CPU SAH BVH
+    backends_.push_back(new RasterBackend());
+    backends_.push_back(new CpuBvhBackend(cpu_));
 #ifdef WITH_EMBREE
     backends_.push_back(new EmbreeBackend(cpu_));
 #endif
     backends_.push_back(new OpenClBackend(max_bounces, ambient, shadow_eps));
-    cur_ = 1;  // start on the CPU ray tracer, not the raster fallback
+    cur_ = 1;
 }
 
 void Renderer::shutdown() {
@@ -229,5 +229,5 @@ void Renderer::cycle(int dir) {
         cur_ = (cur_ + (dir < 0 ? n - 1 : 1)) % n;
         if (backends_[cur_]->available()) return;
     }
-    cur_ = 0;  // CPU is always available
+    cur_ = 0;
 }

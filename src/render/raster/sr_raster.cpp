@@ -2,13 +2,13 @@
 #include <cmath>
 #include <algorithm>
 
-// Fog parameters (simple depth-based fade in eye space meters)
+
 static constexpr float kFogStart = 5.0f;
 static constexpr float kFogEnd = 100.0f;
 
-// Light bluish
+
 static constexpr uint32_t kFogColor = 0xFFADD8E6;
-// Global guard-band factor for clip planes; set per draw call if needed.
+
 static float g_clipGuard = 1.0f + 1e-3f;
 typedef float (*insidePlaneFn)(const clipVertex &);
 struct clipBuffer
@@ -29,7 +29,7 @@ struct clipBuffer
         }
     }
 };
-// static clipBuffer s_clipBuffer;
+
 
 inline void sort_vertices_by_y(vec3 &v0, vec3 &v1, vec3 &v2)
 {
@@ -93,7 +93,7 @@ static inline uint32_t lerp_color(uint32_t a, uint32_t b, float t)
 uint32_t sample_texture(const texture *tex, float s, float t)
 {
     if (tex == nullptr || tex->data == nullptr)
-        return 0xFFFFFFFF; // White color if no texture
+        return 0xFFFFFFFF;
 
     int tx = int(s * float(tex->width));
     int ty = int(t * float(tex->height));
@@ -136,7 +136,7 @@ clipVertex lerp_clip(const clipVertex &a, const clipVertex &b, float t)
     return r;
 }
 
-// Usamos punteros o referencias a los buffers estáticos que definimos antes
+
 void clip_against_plane(const clipBuffer &in, clipBuffer &out, insidePlaneFn inside_fn)
 {
     out.count = 0;
@@ -145,7 +145,7 @@ void clip_against_plane(const clipBuffer &in, clipBuffer &out, insidePlaneFn ins
 
     constexpr float eps = 1e-6f;
 
-    // S es el último vértice del polígono de entrada
+
     clipVertex S = in.buf[in.count - 1];
     float dS = inside_fn(S);
 
@@ -286,7 +286,7 @@ void render_triangle(framebuffer &fb, rasterCoord cv0, rasterCoord cv1, rasterCo
                     bColor = config.baseColor;
                 else
                 {
-                    // For now texture sampling with barycentric coords without light
+
                     float uz = bar.x * v0_uv.x + bar.y * v1_uv.x + bar.z * v2_uv.x;
                     float vz = bar.x * v0_uv.y + bar.y * v1_uv.y + bar.z * v2_uv.y;
                     float s = uz / z_inv;
@@ -296,14 +296,14 @@ void render_triangle(framebuffer &fb, rasterCoord cv0, rasterCoord cv1, rasterCo
 
                 float realFactor = 0.5f + lightFactor * 0.5f;
 
-                // Eye-space depth from interpolated 1/w (z_inv)
+
                 float eyeDepth = (z_inv > 1e-6f) ? (1.0f / z_inv) : kFogEnd;
-                // Fog factor based on eye-space distance
+
                 float fogT = (eyeDepth - kFogStart) / (kFogEnd - kFogStart);
-                fogT = 0;//std::clamp(fogT, 0.0f, 1.0f);
+                fogT = 0;
 
                 uint32_t lit = brightness_color(bColor, realFactor);
-                uint32_t finalColor = lerp_color(lit, kFogColor, fogT); // fogT=0 -> lit, fogT=1 -> fog
+                uint32_t finalColor = lerp_color(lit, kFogColor, fogT);
 
                 fb.colorBuffer[y * fb.width + x] = finalColor;
                 if (!config.ignoreDepth)
@@ -322,10 +322,10 @@ float check_if_visible(vec3 screen_v0, vec3 screen_v1, vec3 screen_v2)
     return area;
 }
 
-// Render mesh using config, can be modified to use different configs
+
 void render_mesh(framebuffer &fb, const camera &cam, const mesh &m, renderConfig &config)
 {
-    // Static clip buffers to avoid reallocating every draw call, change if multithreading
+
     static clipBuffer A, B;
 
     mat4 mvp = cam.projection() * cam.view() * m.modelMatrix();
@@ -338,13 +338,13 @@ void render_mesh(framebuffer &fb, const camera &cam, const mesh &m, renderConfig
         clipVertex v1{mvp * m.vertices[tri.v1].p, m.vertices[tri.v1].t};
         clipVertex v2{mvp * m.vertices[tri.v2].p, m.vertices[tri.v2].t};
 
-        // Compute light
+
         vec3 l_v0 = mv * vec4(m.vertices[tri.v0].p.x, m.vertices[tri.v0].p.y, m.vertices[tri.v0].p.z, 1.0f);
         vec3 l_v1 = mv * vec4(m.vertices[tri.v1].p.x, m.vertices[tri.v1].p.y, m.vertices[tri.v1].p.z, 1.0f);
         vec3 l_v2 = mv * vec4(m.vertices[tri.v2].p.x, m.vertices[tri.v2].p.y, m.vertices[tri.v2].p.z, 1.0f);
 
         vec3 normal = normalize(get_normal(l_v0, l_v1, l_v2));
-        // Compute cross
+
         float d = dot(normal, vec3(0.0f, 0.0f, -1.0f));
         float lightFactor;
         if (config.ignoreLight)
@@ -352,16 +352,16 @@ void render_mesh(framebuffer &fb, const camera &cam, const mesh &m, renderConfig
         else
             lightFactor = std::max(0.0f, d * config.lightInfluence);
 
-        // if (check_if_visible(base_screen_v0, base_screen_v1, base_screen_v2) > 0)
-        //     continue;
 
-        // initiate poly
+
+
+
         A.clear();
         A.add(v0);
         A.add(v1);
         A.add(v2);
 
-        // clip against planes
+
         clip_against_plane(A, B, plane_left);
         A.clear();
         clip_against_plane(B, A, plane_right);
@@ -374,7 +374,7 @@ void render_mesh(framebuffer &fb, const camera &cam, const mesh &m, renderConfig
         A.clear();
         clip_against_plane(B, A, plane_far);
 
-        // Result is A
+
         const clipBuffer &poly = A;
         clipVertex base = poly.buf[0];
         for (size_t i = 1; i + 1 < poly.count; ++i)
@@ -393,8 +393,8 @@ void render_mesh(framebuffer &fb, const camera &cam, const mesh &m, renderConfig
             vec2 e0 = screen_v1 - screen_v0;
             vec2 e1 = screen_v2 - screen_v0;
 
-            // Backface cull: CCW = front-facing, which projects to a negative
-            // signed area (convert_to_fb flips Y). Double-sided meshes opt out.
+
+
             float area = e0.x * e1.y - e0.y * e1.x;
             if (config.backfaceCull && !m.double_sided && area > 0.0f)
                 continue;
@@ -412,7 +412,7 @@ void render_mesh(framebuffer &fb, const camera &cam, const mesh &m, renderConfig
     }
 }
 
-//Draw skybox
+
 
 void render_skybox(framebuffer &fb, const camera &cam, std::array<texture, 6> &skyboxTextures)
 {
@@ -425,8 +425,8 @@ void render_skybox(framebuffer &fb, const camera &cam, std::array<texture, 6> &s
         .ignoreLight = true,
     };
     const static mesh skyboxMesh = create_skybox_mesh();
-    // We can optimize by precomputing this MVP since the skybox doesn't move, but for simplicity we compute it every frame
-    mat4 mvp = cam.projection() * transpose(cam.rotation()); // TRANSPOSE because we want to ignore rotation for the skybox, only use projection.
+
+    mat4 mvp = cam.projection() * transpose(cam.rotation());
     for (int index = 0; index < static_cast<int>(skyboxMesh.faces.size()); ++index)
     {
         const triangle &tri = skyboxMesh.faces[index];
@@ -435,13 +435,13 @@ void render_skybox(framebuffer &fb, const camera &cam, std::array<texture, 6> &s
         clipVertex v1{mvp * skyboxMesh.vertices[tri.v1].p, skyboxMesh.vertices[tri.v1].t};
         clipVertex v2{mvp * skyboxMesh.vertices[tri.v2].p, skyboxMesh.vertices[tri.v2].t};
 
-        // initiate poly
+
         A.clear();
         A.add(v0);
         A.add(v1);
         A.add(v2);
 
-        // clip against planes
+
         clip_against_plane(A, B, plane_left);
         A.clear();
         clip_against_plane(B, A, plane_right);
@@ -454,7 +454,7 @@ void render_skybox(framebuffer &fb, const camera &cam, std::array<texture, 6> &s
         A.clear();
         clip_against_plane(B, A, plane_far);
 
-        // Result is A
+
         const clipBuffer &poly = A;
         clipVertex base = poly.buf[0];
         for (size_t i = 1; i + 1 < poly.count; ++i)
@@ -476,17 +476,17 @@ void render_skybox(framebuffer &fb, const camera &cam, std::array<texture, 6> &s
             rasterCoord cv0 = {screen_v0, uvw0};
             rasterCoord cv1 = {screen_v1, uvw1};
             rasterCoord cv2 = {screen_v2, uvw2};
-            config.tex = &skyboxTextures[index / 2]; // Each face of the skybox corresponds to 2 triangles, so we divide by 2 to get the correct texture index
+            config.tex = &skyboxTextures[index / 2];
             render_triangle(fb, cv0, cv1, cv2, config, 1.0f, true);
         }
     }
 }
 
-// Clip a clip-space segment against the near plane (w >= w_min). Without this,
-// a segment with an endpoint behind the camera (w <= 0) would divide by a
-// non-positive w and produce garbage, so the old code just discarded it whole.
-// Here we instead move the offending endpoint onto the near plane. Returns
-// false only if the whole segment is behind the camera.
+
+
+
+
+
 static bool clip_near_plane(vec4 &a, vec4 &b, float w_min)
 {
     bool a_in = a.w >= w_min;
@@ -494,16 +494,16 @@ static bool clip_near_plane(vec4 &a, vec4 &b, float w_min)
     if (a_in && b_in) return true;
     if (!a_in && !b_in) return false;
     float t = (w_min - a.w) / (b.w - a.w);
-    vec4 m = a + (b - a) * t;     // interpolate in clip space
+    vec4 m = a + (b - a) * t;
     if (!a_in) a = m; else b = m;
     return true;
 }
 
-// Cohen-Sutherland region code for 2D viewport clipping.
+
 static int cs_outcode(float x, float y, int w, int h)
 {
-    // NaN fails every comparison, so without this it would read as "inside"
-    // (outcode 0) and slip an INT_MIN coordinate into draw_line. Flag it out.
+
+
     if (!std::isfinite(x) || !std::isfinite(y)) return 1 | 2 | 4 | 8;
     int c = 0;
     if (x < 0)            c |= 1;
@@ -513,17 +513,17 @@ static int cs_outcode(float x, float y, int w, int h)
     return c;
 }
 
-// Clip a 2D segment to the viewport rectangle. Returns false if fully outside.
-// (draw_line already skips off-screen pixels, but clipping here avoids walking
-// a huge off-screen span and the int overflow that long lines could cause.)
+
+
+
 static bool clip_segment_2d(float &x0, float &y0, float &x1, float &y1, int w, int h)
 {
     float xmax = (float)(w - 1), ymax = (float)(h - 1);
     int c0 = cs_outcode(x0, y0, w, h);
     int c1 = cs_outcode(x1, y1, w, h);
     while (true) {
-        if (!(c0 | c1)) return true;  // both inside
-        if (c0 & c1)    return false; // both share an outside region -> reject
+        if (!(c0 | c1)) return true;
+        if (c0 & c1)    return false;
         int co = c0 ? c0 : c1;
         float x = 0.0f, y = 0.0f;
         if (co & 8)      { x = x0 + (x1 - x0) * (ymax - y0) / (y1 - y0); y = ymax; }
@@ -541,22 +541,22 @@ void draw_gizmo_line(framebuffer &fb, const camera &cam, const vec3 &start, cons
     vec4 a = vp * vec4(start.x, start.y, start.z, 1.0f);
     vec4 b = vp * vec4(end.x,   end.y,   end.z,   1.0f);
 
-    // 1) Near-plane clip (handles endpoints behind the camera).
+
     if (!clip_near_plane(a, b, 1e-4f)) return;
 
-    // 2) Perspective divide -> screen.
+
     vec3 a_scr = convert_to_fb(fb, a / a.w);
     vec3 b_scr = convert_to_fb(fb, b / b.w);
 
-    // 2b) Reject non-finite endpoints. A degenerate/empty AABB (min=+inf,
-    // max=-inf) or a near-zero w can push a coordinate to inf/NaN. Casting
-    // that to int below is UB (yields INT_MIN on x86), which makes the
-    // Bresenham loop in draw_line walk ~2 billion steps and freeze the
-    // frame ("lines rasterized infinitely"). Drop the segment instead.
+
+
+
+
+
     if (!std::isfinite(a_scr.x) || !std::isfinite(a_scr.y) ||
         !std::isfinite(b_scr.x) || !std::isfinite(b_scr.y)) return;
 
-    // 3) Viewport clip (handles off-screen endpoints instead of discarding).
+
     float x0 = a_scr.x, y0 = a_scr.y, x1 = b_scr.x, y1 = b_scr.y;
     if (!clip_segment_2d(x0, y0, x1, y1, fb.width, fb.height)) return;
 
@@ -577,7 +577,7 @@ void draw_segment_3d(framebuffer &fb, const camera &cam,
     vec4 a_clip = cam.projection() * cam.view() * vec4(a.x, a.y, a.z, 1.0f);
     vec4 b_clip = cam.projection() * cam.view() * vec4(b.x, b.y, b.z, 1.0f);
 
-    // Cull whole segment if either endpoint is behind the camera.
+
     if (a_clip.w <= 0.0f || b_clip.w <= 0.0f) return;
 
     vec3 a_ndc = a_clip / a_clip.w;

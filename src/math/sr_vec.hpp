@@ -1,9 +1,7 @@
 #pragma once
 
 #include <cmath>
-/*
-    VECTORS: Simple vector structure with basic operations. (2D, 3D, 4D)
-*/
+
 
 enum vec_component
 {
@@ -54,7 +52,7 @@ union vec4
     vec4(float x, float y, float z, float w) : x(x), y(y), z(z), w(w) {}
 };
 
-// ---------- vec2 ----------
+
 inline vec2 operator+(vec2 a, vec2 b) { return {a.x + b.x, a.y + b.y}; }
 inline vec2 operator-(vec2 a, vec2 b) { return {a.x - b.x, a.y - b.y}; }
 inline vec2 operator*(vec2 a, float s) { return {a.x * s, a.y * s}; }
@@ -73,7 +71,7 @@ inline vec2 normalize(vec2 a)
 
 inline vec2::vec2(const vec3 &v) : x(v.x), y(v.y) {}
 
-// ---------- vec3 ----------
+
 inline vec3 operator+(vec3 a, vec3 b) { return {a.x + b.x, a.y + b.y, a.z + b.z}; }
 inline vec3 operator-(vec3 a, vec3 b) { return {a.x - b.x, a.y - b.y, a.z - b.z}; }
 inline vec3 operator-(vec3 a) { return {-a.x, -a.y, -a.z}; }
@@ -102,7 +100,7 @@ inline vec3 maximum(vec3 a, vec3 b) { return {std::fmax(a.x, b.x), std::fmax(a.y
 inline vec3::vec3(const vec4 &v) : x(v.x), y(v.y), z(v.z) {}
 
 
-// ---------- vec4 ----------
+
 inline vec4 operator+(vec4 a, vec4 b) { return {a.x + b.x, a.y + b.y, a.z + b.z, a.w + b.w}; }
 inline vec4 operator-(vec4 a, vec4 b) { return {a.x - b.x, a.y - b.y, a.z - b.z, a.w - b.w}; }
 inline vec4 operator*(vec4 a, float s) { return {a.x * s, a.y * s, a.z * s, a.w * s}; }
@@ -118,7 +116,7 @@ inline vec4 normalize(vec4 a)
     return l ? a / l : a;
 }
 
-// Include a lerp function for vec2, vec3, vec4
+
 inline vec2 lerp(vec2 a, vec2 b, float t) { return a * (1 - t) + b * t; }
 inline vec3 lerp(vec3 a, vec3 b, float t) { return a * (1 - t) + b * t; }
 inline vec4 lerp(vec4 a, vec4 b, float t) { return a * (1 - t) + b * t; }

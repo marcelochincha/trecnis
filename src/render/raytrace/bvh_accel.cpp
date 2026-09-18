@@ -1,7 +1,7 @@
 #include <render/raytrace/bvh_accel.hpp>
 #include <cmath>
 
-// Möller–Trumbore, used only for the brute-force (no-BVH) path.
+
 static bool ray_intersect_triangle(const vec3& o, const vec3& d,
                                    const vec3& v0, const vec3& v1, const vec3& v2,
                                    float& t)

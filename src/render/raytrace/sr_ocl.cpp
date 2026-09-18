@@ -1,11 +1,11 @@
 #include <render/raytrace/sr_ocl.hpp>
 
-// =============================================================================
-// Build with -DENABLE_OPENCL to compile the GPU offload below; without it the
-// whole OpenCL backend (and the CL/cl.h dependency + -lOpenCL link) is dropped
-// and we emit no-op stubs. The caller already falls back to the CPU ray tracer
-// whenever ocl::available() is false, so nothing else changes.
-// =============================================================================
+
+
+
+
+
+
 #ifdef ENABLE_OPENCL
 
 #define CL_TARGET_OPENCL_VERSION 120
@@ -20,10 +20,10 @@
 
 namespace ocl {
 
-// --- The kernel. Mirrors trace_ray / BVH traversal from sr_game.cpp + bvh.cpp,
-// de-recursivized into a bounce loop. -------------------------------------------
+
+
 static const char* KERNEL_SRC = R"CLC(
-// MAXD / AMB / SEPS injected via -D at build time.
+
 #ifndef MAXD
 #define MAXD 3
 #endif
@@ -35,11 +35,11 @@ static const char* KERNEL_SRC = R"CLC(
 #endif
 #define TEPS 1e-8f
 
-// Tri buffer layout (32 floats/tri — matches BVH::flatten):
-//  [0-2]  v0   [3-5]  v1   [6-8]  v2
-//  [9-11] face-normal   [12-14] albedo
-//  [15] roughness  [16] metallic  [17] ior  [18] smooth(0/1)  [19] pad
-//  [20-22] n0  [23-25] n1  [26-28] n2  [29-31] emission
+
+
+
+
+
 #define TSTRIDE 32
 #define PI 3.14159265f
 
@@ -69,8 +69,8 @@ inline bool aabb_hit(float3 bmin,float3 bmax,float3 o,float3 inv,float tmax,floa
     *tnear=tmin; return true;
 }
 
-// Phong smooth normal: barycentric interpolation using Cramér's rule,
-// mirroring tri_smooth_normal() in sr_game.cpp.
+
+
 inline float3 phong_normal(__global const float* tris, int idx,
                            float3 v0, float3 v1, float3 v2, float3 P){
     float3 e1=v1-v0, e2=v2-v0, p=P-v0;
@@ -87,7 +87,7 @@ inline float3 phong_normal(__global const float* tris, int idx,
     return normalize(u*n0 + v*n1 + w*n2);
 }
 
-// Nearest hit in one BVH. Near child pushed last so it pops first (best shrinks sooner).
+
 int bvh_traverse(__global const float4* nb, __global const int4* nl, int nn,
                  __global const float* tris, float3 o, float3 d, float3 inv, float* best){
     if(nn<=0) return -1;
@@ -122,7 +122,7 @@ int bvh_traverse(__global const float4* nb, __global const int4* nl, int nn,
     return besti;
 }
 
-// Any-hit shadow ray — stops at first hit.
+
 bool bvh_occluded(__global const float4* nb, __global const int4* nl, int nn,
                   __global const float* tris, float3 o, float3 d, float3 inv, float maxt){
     if(nn<=0) return false;
@@ -157,7 +157,7 @@ float3 sample_face(__global const uint* px,int off,int w,int h,float u,float v){
     return (float3)(((c>>16)&0xFF)/255.0f, ((c>>8)&0xFF)/255.0f, (c&0xFF)/255.0f);
 }
 
-// Mirrors sample_sky() from sr_game.cpp so GPU/CPU skies match.
+
 float3 sample_sky(__global const uint* px,__global const int* offs,
                   __global const int* ws,__global const int* hs, float3 d){
     float ax=fabs(d.x), ay=fabs(d.y), az=fabs(d.z);
@@ -171,14 +171,14 @@ float3 sample_sky(__global const uint* px,__global const int* offs,
     return sample_face(px,offs[idx],ws[idx],hs[idx],u,v);
 }
 
-// xorshift32 + [0,1) float — bit-identical to lcg/randf() in sr_raytrace.cpp so
-// the GPU and CPU sample the same directions/lights for a given seed.
+
+
 inline uint xrand(uint* s){ uint x=*s; x^=x<<13; x^=x>>17; x^=x<<5; *s=x; return x; }
 inline float randf(uint* s){ return (xrand(s)>>8) * (1.0f/16777216.0f); }
 
-// Next Event Estimation: pick one random emissive triangle, sample a point on
-// it, and return its unshadowed radiance (weighted by triangle count so the
-// single-sample pick stays unbiased). Mirrors the NEE block in trace_ray().
+
+
+
 float3 nee(__global const float* etris, int enn,
            __global const float4* dnb,__global const int4* dnl,int dnn,__global const float* dtris,
            __global const float4* rnb,__global const int4* rnl,int rnn,__global const float* rtris,
@@ -229,10 +229,10 @@ __kernel void trace(
 
     float3 accum=(float3)(0.0f,0.0f,0.0f);
 
-    // One Monte-Carlo path per sample. trace_ray() spawns two child rays per
-    // hit (a diffuse GI bounce + a specular reflection); we can't recurse on the
-    // GPU, so we pick ONE continuation stochastically and weight it so the
-    // estimator matches trace_ray()'s summed radiance in expectation.
+
+
+
+
     for(int s=0; s<spp; s++){
         uint seed = ((uint)(gy*W+gx) * 2654435761u) ^ ((uint)s * 805459861u);
         float3 orig=pos, dir=pdir;
@@ -249,15 +249,15 @@ __kernel void trace(
             __global const float* htris; int hidx;
             if(ri>=0){ htris=rtris; hidx=ri; }
             else if(di>=0){ htris=dtris; hidx=di; }
-            else { // miss: cubemap sky, or flat ambient when the sky is off
+            else {
                 color += tp * (skybox ? sample_sky(skypx,skyoff,skyw,skyh,dir)
                                       : (float3)(AMB,AMB,AMB));
                 break;
             }
 
-            // Emissive surface: contributes its radiance and terminates the path
-            // (unless this is a diffuse GI ray, which excludes direct emission to
-            // avoid double-counting the light already sampled via NEE).
+
+
+
             float3 emis=ld3(htris,hidx*TSTRIDE+29);
             if(emis.x+emis.y+emis.z > 0.0f){
                 if(!skip_emission) color += tp*emis;
@@ -266,7 +266,7 @@ __kernel void trace(
 
             float3 P=orig + dir*best;
 
-            // Smooth shading: interpolate per-vertex normals if the tri has them.
+
             float3 N;
             if(htris[hidx*TSTRIDE+18]>0.5f){
                 float3 v0=ld3(htris,hidx*TSTRIDE), v1=ld3(htris,hidx*TSTRIDE+3), v2=ld3(htris,hidx*TSTRIDE+6);
@@ -276,8 +276,8 @@ __kernel void trace(
             }
             if(dot(N,dir)>0.0f) N=-N;
 
-            // Geometric (face) normal oriented toward the ray — reliable "outside"
-            // reference to offset/bend secondary rays off the true surface.
+
+
             float3 Ng=ld3(htris,hidx*TSTRIDE+9);
             if(dot(Ng,dir)>0.0f) Ng=-Ng;
 
@@ -286,8 +286,8 @@ __kernel void trace(
             float metallic  = htris[hidx*TSTRIDE+16];
             float k_d=(1.0f-metallic)+metallic*roughness;
 
-            // Direct lighting: NEE off the emissive triangles when the scene has
-            // them, otherwise the legacy flat-ambient + directional-sun model.
+
+
             float3 direct;
             if(enn>0){
                 float3 dl=nee(etris,enn,dnb,dnl,dnn,dtris,rnb,rnl,rnn,rtris,P,N,Ng,&seed);
@@ -305,7 +305,7 @@ __kernel void trace(
                 direct=(float3)(albedo.x*light*k_d, albedo.y*light*k_d, albedo.z*light*k_d);
             }
 
-            // Fresnel-Schlick: F0 = albedo mean for metals, 0.04 for dielectrics.
+
             float cosV=fmax(0.0f,dot(N,-dir));
             float F0=metallic>0.5f ? (albedo.x+albedo.y+albedo.z)/3.0f : 0.04f;
             float fres=F0+(1.0f-F0)*pown(1.0f-cosV,5);
@@ -314,16 +314,16 @@ __kernel void trace(
             bool can_ref = reflections && spec>0.01f && depth<MAXD;
             bool can_gi  = (enn>0) && metallic<0.5f && depth<MAXD;
 
-            // trace_ray weights local (direct + GI) by (1-spec) whenever it also
-            // reflects; otherwise local is added at full weight.
+
+
             color += tp * (can_ref ? (1.0f-spec) : 1.0f) * direct;
 
             float3 spec_tint=metallic>0.5f ? albedo : (float3)(1.0f,1.0f,1.0f);
 
-            // Choose ONE continuation. Where trace_ray sums both a diffuse GI
-            // bounce (weight (1-spec)*albedo*k_d, skip_emission) and a specular
-            // reflection (weight spec*tint), pick between them with p=spec so the
-            // 1/p weight cancels cleanly; when only one applies, take it directly.
+
+
+
+
             bool go_spec, go_diff;
             if(can_ref && can_gi){
                 if(randf(&seed) < spec){ go_spec=true;  go_diff=false; tp*=spec_tint; }
@@ -335,7 +335,7 @@ __kernel void trace(
                 go_spec=false; go_diff=true;
                 tp*=(float3)(albedo.x*k_d, albedo.y*k_d, albedo.z*k_d);
             } else {
-                break; // no continuation: only direct light contributes here
+                break;
             }
 
             if(go_spec){
@@ -344,7 +344,7 @@ __kernel void trace(
                 float RdotG=dot(R,Ng);
                 if(RdotG<0.0f){ R=normalize(R - Ng*RdotG); R=normalize(R + Ng*1e-4f); }
                 dir=R; orig=P+Ng*SEPS;
-            } else { // go_diff — cosine-weighted hemisphere around N
+            } else {
                 skip_emission=true;
                 float di1=randf(&seed), di2=randf(&seed);
                 float phi=2.0f*PI*di1;
@@ -366,7 +366,7 @@ __kernel void trace(
 }
 )CLC";
 
-// --- host state -------------------------------------------------------------
+
 static bool             g_ok = false;
 static cl_context       g_ctx = 0;
 static cl_command_queue g_queue = 0;
@@ -387,8 +387,8 @@ const char* device_name(){ return g_devname; }
 
 bool available(){ return g_ok; }
 
-// Forward decl: grow-on-demand buffer upload (release old, reuse when it fits),
-// so repeated uploads on scene switches don't leak GPU memory.
+
+
 static void upload_reuse(cl_mem* buf, size_t* cap, const void* data, size_t bytes);
 
 bool init(int max_ray_depth, float ambient, float shadow_eps){
@@ -434,8 +434,8 @@ bool init(int max_ray_depth, float ambient, float shadow_eps){
 
 void set_room(const float* nb, const int* nl, const float* tris, int nnodes, int ntris){
     if(!g_ok) return;
-    // Reuse/grow the room buffers instead of reallocating: set_room runs on every
-    // scene reload, so allocating fresh buffers each time leaked the old ones.
+
+
     g_rnn = nnodes;
     upload_reuse(&g_rnb,   &g_rnb_cap,   nb,   (size_t)nnodes*8*sizeof(float));
     upload_reuse(&g_rnl,   &g_rnl_cap,   nl,   (size_t)nnodes*4*sizeof(int));
@@ -537,7 +537,7 @@ void render(float cpx,float cpy,float cpz,
     clSetKernelArg(g_kern,a++,sizeof(int),&H);
     clSetKernelArg(g_kern,a++,sizeof(cl_mem),&g_out);
 
-    // 8x8 work-groups: neighbouring pixels share BVH cache lines.
+
     size_t local[2]  = { 8, 8 };
     size_t global[2] = { (size_t)((W + 7) / 8 * 8), (size_t)((H + 7) / 8 * 8) };
     cl_int err = clEnqueueNDRangeKernel(g_queue,g_kern,2,nullptr,global,local,0,nullptr,nullptr);
@@ -546,9 +546,9 @@ void render(float cpx,float cpy,float cpz,
     if(err!=CL_SUCCESS){ printf("[ocl] readback failed (%d); disabling GPU path\n",err); g_ok=false; }
 }
 
-} // namespace ocl
+}
 
-#else // !ENABLE_OPENCL
+#else
 
 namespace ocl {
 bool init(int, float, float) { return false; }
@@ -561,6 +561,6 @@ void set_emissive(const float*, int) {}
 void render(float, float, float, float, float, float, float, float, float,
             float, float, float, float, float, float, float, float,
             int, int, int, int, int, uint32_t*) {}
-} // namespace ocl
+}
 
-#endif // ENABLE_OPENCL
+#endif

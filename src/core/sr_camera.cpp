@@ -25,7 +25,7 @@ void camera::recalculateRotationMatrix() const
 
 void camera::recalculateViewMatrix() const
 {
-    //_rotationMatrix = rotationMatrix(_rotation.x,_rotation.y, _rotation.z);
+
     mat4 cam_translation = translationMatrix(-_position);
     _viewMatrix = transpose(this->rotation()) * cam_translation;
     _viewDirty = false;
@@ -33,7 +33,7 @@ void camera::recalculateViewMatrix() const
 
 void camera::recalculateProjectionMatrix() const
 {
-    // HORIZONTAL FOV COMPUTE
+
     float b = tanf(to_radians(_fov) * 0.5f);
     float a = b / _aspectRatio;
 
@@ -82,7 +82,7 @@ const mat4 camera::worldMatrix() const
     return t * r;
 }
 
-// setters controlados que marcan dirty
+
 void camera::setPosition(const vec3 &p)
 {
     _position = p;
@@ -104,7 +104,7 @@ void camera::lookAt(const vec3 &target, const vec3 &c_up)
 {
     vec3 forward = target - _position;
     forward = normalize(forward);
-    //printf("LookAt forward (pre-normalize): %f, %f, %f\n", forward.x, forward.y, forward.z);
+
     vec3 right = normalize(cross(forward, c_up));
     vec3 up = cross(right, forward);
 

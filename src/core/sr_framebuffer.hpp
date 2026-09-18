@@ -1,7 +1,7 @@
 #pragma once
 #include <cstdint>
 
-// Framebuffer structure
+
 struct framebuffer
 {
     uint32_t *colorBuffer;
@@ -27,7 +27,7 @@ struct framebuffer
         for (int i = 0; i < width * height; ++i)
         {
             colorBuffer[i] = clearColor;
-            depthBuffer[i] = 1.0f; // Clear depth to far plane
+            depthBuffer[i] = 1.0f;
         }
     }
 };

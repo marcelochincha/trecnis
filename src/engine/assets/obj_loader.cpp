@@ -29,13 +29,13 @@ bool load_obj_mesh(const std::string& path, mesh& out, float scale) {
 
     std::vector<vec3> verts;
     std::vector<vec2> uvs;
-    std::map<std::pair<int,int>, uint32_t> dedup; // (vi,ti) -> vertex index
+    std::map<std::pair<int,int>, uint32_t> dedup;
     out.vertices.clear();
     out.faces.clear();
     out.src_vertex.clear();
     out.tex = nullptr;
 
-    // Reads the first map_Kd from an .mtl and loads it into out.tex.
+
     auto load_mtl = [&](const std::string& fname) {
         std::ifstream mf(dir + fname);
         if (!mf) return;
@@ -94,7 +94,7 @@ bool load_obj_mesh(const std::string& path, mesh& out, float scale) {
                 if (*p == '/') {
                     ++p;
                     if (*p != '/') { ti = std::strtol(p, &e, 10); p = e; hasT = true; }
-                    if (*p == '/') { ++p; std::strtol(p, &e, 10); p = e; } // skip vn
+                    if (*p == '/') { ++p; std::strtol(p, &e, 10); p = e; }
                 }
                 if (vi == 0) continue;
                 int vIdx = (vi > 0) ? (int)vi - 1 : nv + (int)vi;
@@ -103,7 +103,7 @@ bool load_obj_mesh(const std::string& path, mesh& out, float scale) {
             }
             for (std::size_t i = 1; i + 1 < poly.size(); ++i)
                 out.faces.push_back({ poly[0], poly[i], poly[i + 1] });
-        } else if (s[0] == 'm') { // mtllib
+        } else if (s[0] == 'm') {
             std::istringstream ss(s);
             std::string tag, fn; ss >> tag >> fn;
             if (tag == "mtllib") load_mtl(fn);
@@ -175,7 +175,7 @@ void load_obj_tris(const char* path, const vec3& base, float scale,
     std::vector<Face> faces;
     std::string cur_mat, line;
 
-    // Fast hand-parsed geometry loop (avoids istringstream allocation per line)
+
     while (std::getline(f, line)) {
         const char* s = line.c_str();
         while (*s == ' ' || *s == '\t') ++s;
@@ -194,7 +194,7 @@ void load_obj_tris(const char* path, const vec3& base, float scale,
             uvs.push_back(vec2(u, v));
         }
         else if (s[0] == 'v' && s[1] == 'n') {
-            // normals recomputed as smooth normals below; skip
+
         }
         else if (s[0] == 'f' && (s[1] == ' ' || s[1] == '\t')) {
             Face fc; fc.mat = cur_mat;
@@ -209,7 +209,7 @@ void load_obj_tris(const char* path, const vec3& base, float scale,
                 if (*p == '/') {
                     ++p;
                     if (*p != '/') { ti = std::strtol(p, &e, 10); p = e; hasT = true; }
-                    if (*p == '/') { ++p; std::strtol(p, &e, 10); p = e; } // skip vn
+                    if (*p == '/') { ++p; std::strtol(p, &e, 10); p = e; }
                 }
                 if (vi == 0) continue;
                 int vIdx = (vi > 0) ? (int)vi - 1 : nv + (int)vi;
@@ -226,7 +226,7 @@ void load_obj_tris(const char* path, const vec3& base, float scale,
         }
     }
 
-    // Accumulate smooth normals (area-weighted sum of face normals per vertex)
+
     auto valid_v = [&](int i) { return i >= 0 && i < (int)verts.size(); };
     auto valid_t = [&](int i) { return i >= 0 && i < (int)uvs.size(); };
     std::vector<vec3> vn(verts.size(), vec3(0, 0, 0));
@@ -234,7 +234,7 @@ void load_obj_tris(const char* path, const vec3& base, float scale,
         for (size_t i = 1; i + 1 < fc.corners.size(); ++i) {
             int a = fc.corners[0].vi, b = fc.corners[i].vi, c = fc.corners[i+1].vi;
             if (!valid_v(a) || !valid_v(b) || !valid_v(c)) continue;
-            vec3 n = cross(verts[b] - verts[a], verts[c] - verts[a]); // area-weighted
+            vec3 n = cross(verts[b] - verts[a], verts[c] - verts[a]);
             vn[a] = vn[a] + n; vn[b] = vn[b] + n; vn[c] = vn[c] + n;
         }
     for (auto& n : vn) n = normalize(n);

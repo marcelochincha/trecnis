@@ -16,7 +16,7 @@ bool load_camera_anim(const std::string& path, std::vector<CameraKey>& keys,
         std::string tok; ss >> tok;
         if (tok == "fps")   { ss >> fps; continue; }
         if (tok == "music") { std::getline(ss >> std::ws, music); continue; }
-        // Otherwise the first token was px; parse the remaining 5 floats.
+
         CameraKey k{};
         k.pos.x = std::stof(tok);
         ss >> k.pos.y >> k.pos.z >> k.euler_deg.x >> k.euler_deg.y >> k.euler_deg.z;
@@ -36,14 +36,14 @@ void sample_camera_anim(const std::vector<CameraKey>& keys, const CameraKey& sta
                         float t, float fps, vec3& out_pos, vec3& out_euler_deg) {
     if (keys.empty()) { out_pos = start.pos; out_euler_deg = start.euler_deg; return; }
 
-    float u = t * fps; // in keyframe units
+    float u = t * fps;
     int   n = (int)keys.size();
     CameraKey a, b; float local;
     if (u < 1.0f) { a = start; b = keys[0]; local = u; }
     else {
         float uu = u - 1.0f;
         int seg = (int)std::floor(uu);
-        if (seg >= n - 1) {           // past the end: hold the last keyframe
+        if (seg >= n - 1) {
             out_pos = keys[n - 1].pos;
             out_euler_deg = keys[n - 1].euler_deg;
             return;
@@ -51,9 +51,9 @@ void sample_camera_anim(const std::vector<CameraKey>& keys, const CameraKey& sta
         local = uu - std::floor(uu);
         a = keys[seg]; b = keys[seg + 1];
     }
-    float s = local * local * (3.0f - 2.0f * local); // smoothstep ease
+    float s = local * local * (3.0f - 2.0f * local);
     out_pos = lerp(a.pos, b.pos, s);
-    auto alerp = [&](float x, float y) {              // wrap-aware angle lerp (deg)
+    auto alerp = [&](float x, float y) {
         float d = y - x;
         while (d >  180.0f) d -= 360.0f;
         while (d < -180.0f) d += 360.0f;

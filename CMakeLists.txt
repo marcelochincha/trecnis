@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.16)
 project(pingpong_rt LANGUAGES CXX)
 
-# ---- Language & build settings ----------------------------------------------
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -10,9 +10,9 @@ if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
 endif()
 
-# ---- SDL2 (bundled: third_party/SDL2/ + lib/) --------------------------------
-# On macOS a system/Homebrew install is tried first via find_package.
-# On Windows the bundled static libs in lib/ are used directly.
+
+
+
 find_package(SDL2 QUIET)
 
 if(NOT TARGET SDL2::SDL2)
@@ -51,7 +51,7 @@ if(NOT TARGET SDL2::SDL2)
     endif()
 endif()
 
-# ---- SDL2_mixer (bundled: third_party/SDL2/ + lib/) -------------------------
+
 set(SDL2_MIXER_LIB "${CMAKE_SOURCE_DIR}/lib/libSDL2_mixer.dll.a")
 
 if(EXISTS "${SDL2_MIXER_LIB}")
@@ -65,7 +65,7 @@ else()
     message(STATUS "SDL2_mixer not found in lib/ -> building without audio")
 endif()
 
-# ---- Sources: every .cpp under src/, recursively ----------------------------
+
 file(GLOB_RECURSE APP_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_SOURCE_DIR}/src/*.cpp")
 
@@ -78,7 +78,7 @@ endif()
 
 target_include_directories(${PROJECT_NAME} PRIVATE "${CMAKE_SOURCE_DIR}/src")
 
-# ---- Link SDL2 & SDL2_mixer -------------------------------------------------
+
 target_link_libraries(${PROJECT_NAME} PRIVATE SDL2::SDL2)
 if(TARGET SDL2_mixer::SDL2_mixer)
     target_link_libraries(${PROJECT_NAME} PRIVATE SDL2_mixer::SDL2_mixer)
@@ -90,10 +90,10 @@ if(WIN32)
     target_link_libraries(${PROJECT_NAME} PRIVATE mingw32 psapi)
 endif()
 
-# ---- OpenCL GPU backend (optional) ------------------------------------------
-# Windows: bundled lib/libOpenCL.a + third_party/CL/ headers.
-# macOS:   system -framework OpenCL (no lib needed).
-# Enable:  cmake -DWITH_OPENCL=ON ..
+
+
+
+
 option(WITH_OPENCL "Enable OpenCL GPU ray-tracing backend [G key]" OFF)
 if(WITH_OPENCL)
     if(APPLE)
@@ -119,9 +119,9 @@ if(WITH_OPENCL)
     endif()
 endif()
 
-# ---- Intel Embree (optional, bundled: third_party/embree4/ + lib/) ----------
-# Default OFF for PingPong RT: embree4.lib is an MSVC import lib and is the
-# main source of friction with MinGW. Bring it up as a separate task later.
+
+
+
 option(WITH_EMBREE "Use bundled Intel Embree 4" OFF)
 if(WITH_EMBREE)
     set(EMBREE_INCLUDE "${CMAKE_SOURCE_DIR}/third_party")
@@ -140,14 +140,14 @@ if(WITH_EMBREE)
     endif()
 endif()
 
-# ---- Compiler flags --------------------------------------------------------
-# -ffast-math mirrors the GPU kernel's -cl-fast-relaxed-math so the CPU ray
-# tracer rounds the same way as the OpenCL backend.
+
+
+
 target_compile_options(${PROJECT_NAME} PRIVATE -ffast-math)
 
-# -march=native produces a binary that only runs on this machine's CPU.
-# Guard it behind an option so a portable build is possible (docs/ARCHITECTURE.md
-# risk #2).
+
+
+
 option(NATIVE_ARCH "Optimize for the build machine's CPU (non-portable binary)" ON)
 if(NATIVE_ARCH AND NOT MSVC)
     target_compile_options(${PROJECT_NAME} PRIVATE -march=native)
@@ -158,11 +158,11 @@ if(MSVC)
     target_compile_definitions(${PROJECT_NAME} PRIVATE _CRT_SECURE_NO_WARNINGS)
 endif()
 
-# ---- Where the binary lands -------------------------------------------------
+
 set_target_properties(${PROJECT_NAME} PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 
-# ---- Copy runtime DLLs next to the exe (Windows) ----------------------------
+
 if(WIN32)
     foreach(DLL SDL2.dll libwinpthread-1.dll SDL2_mixer.dll libstdc++-6.dll libgcc_s_seh-1.dll)
         if(EXISTS "${CMAKE_SOURCE_DIR}/bin/${DLL}")
@@ -185,8 +185,8 @@ if(WIN32)
     endforeach()
 endif()
 
-# ---- run target: cmake --build build --target run --------------------------
-# WORKING_DIRECTORY is the repo root so relative res/ paths resolve.
+
+
 add_custom_target(run
     COMMAND ${PROJECT_NAME}
     DEPENDS ${PROJECT_NAME}

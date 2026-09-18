@@ -1,47 +1,47 @@
-// Checkpoint game layer: a static box arena + one ray-traced sphere that moves
-// with delta time and bounces off the walls.
-//
-// This file is the seam between game logic and rendering. It builds a
-// RenderScene (a POD of borrowed pointers) and hands it to the Renderer. It
-// never traces a ray and never touches BVH internals. Floor + walls live in the
-// STATIC BVH (built once); the sphere lives in the DYNAMIC BVH (rebuilt each
-// frame). No per-frame heap allocation happens in this file — the world-space
-// sphere buffer and the raster draw list keep their capacity across frames.
+
+
+
+
+
+
+
+
+
 
 #include <game/sr_game.hpp>
 #include <game/game_state.hpp>
 #include <engine/geom/shapes.hpp>
 
-#include <core/sr_text.hpp>     // draw_text (HUD)
-#include <sr_config.hpp>        // global_config (--threads)
+#include <core/sr_text.hpp>
+#include <sr_config.hpp>
 
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <iostream>
 
-// Passed to Renderer::init; mirrors render/raytrace/sr_raytrace.cpp
-// (AMBIENT = 0.0f, SHADOW_EPS = 1e-4f) so game/ need not include the tracer.
+
+
 static constexpr float kAmbient   = 0.0f;
 static constexpr float kShadowEps = 1e-4f;
 
-// ---------------------------------------------------------------------------
-// helpers
-// ---------------------------------------------------------------------------
+
+
+
 
 static double ms_since(uint64_t t0) {
     return double(SDL_GetPerformanceCounter() - t0) * 1000.0 / double(SDL_GetPerformanceFrequency());
 }
 
-// vec3 colour -> packed 0xAARRGGBB (same rule as pack() in sr_raytrace.cpp).
+
 static uint32_t pack_color(const vec3& c) {
     auto ch = [](float v) { return (uint32_t)(std::clamp(v, 0.0f, 1.0f) * 255.0f + 0.5f); };
     return 0xFF000000u | (ch(c.x) << 16) | (ch(c.y) << 8) | ch(c.z);
 }
 
-// Fill `m` with a world-space triangle-soup mirror of `tris` (identity model
-// matrix). Used for the static court so the raster backend draws what the
-// tracers trace.
+
+
+
 static void fill_raster_mesh(mesh& m, const std::vector<bvh::Tri>& tris) {
     m.vertices.clear();
     m.faces.clear();
@@ -57,11 +57,11 @@ static void fill_raster_mesh(mesh& m, const std::vector<bvh::Tri>& tris) {
     m._modelMatrixDirty = true;
 }
 
-// Seed the camera's live yaw/pitch (e->cam_yaw/cam_pitch) from cam_pos/
-// cam_target at startup (engine euler convention: yaw about +Y, pitch about
-// +X, forward = -Z), and push that initial state to the camera. Every frame
-// afterwards, update_camera() re-applies e->cam_pos/cam_yaw/cam_pitch --
-// this function only runs once, in game_init.
+
+
+
+
+
 static void set_fixed_view(Game* e) {
     vec3 d = normalize(e->cam_target - e->cam_pos);
     e->cam_pitch = std::asin(std::clamp(d.y, -1.0f, 1.0f));
@@ -70,18 +70,18 @@ static void set_fixed_view(Game* e) {
     e->cam.setRotation(vec3(e->cam_pitch, e->cam_yaw, 0.0f));
 }
 
-static constexpr float kMouseSensitivity = 0.0025f;   // rad per relative pixel
-static constexpr float kMaxCamPitch      = 1.4834f;   // ~85 degrees
+static constexpr float kMouseSensitivity = 0.0025f;
+static constexpr float kMaxCamPitch      = 1.4834f;
 
-// Free-fly camera, active only while e->free_cam is set (toggle: C). Adapted
-// from the base engine's free-fly control (trecnis src/game/sr_game.cpp) to
-// this project's `camera` type, which has no built-in fly controller of its
-// own -- it just takes a position + (pitch,yaw,roll) each frame, so the game
-// layer owns the running yaw/pitch/position state (e->cam_yaw/cam_pitch/
-// cam_pos). WASD/Q/E are read directly here instead of going through
-// racket_input, so this and the racket's own WASD/Q/E (see racket_input)
-// never fight over the same frame's input -- exactly one of them reads the
-// keyboard, gated by free_cam.
+
+
+
+
+
+
+
+
+
 static void update_camera(Game* e, float dt) {
     if (e->free_cam) {
         int mdx = 0, mdy = 0;
@@ -99,7 +99,7 @@ static void update_camera(Game* e, float dt) {
         if (k[SDL_SCANCODE_Q]) in.y -= 1.0f;
         if (k[SDL_SCANCODE_E]) in.y += 1.0f;
         float il = magnitude(in);
-        if (il > 1e-4f) in = in / il;   // no diagonal speed boost
+        if (il > 1e-4f) in = in / il;
 
         const float s = std::sin(e->cam_yaw), c = std::cos(e->cam_yaw);
         vec3 move(in.x * c - in.z * s, in.y, in.x * s + in.z * c);
@@ -109,10 +109,10 @@ static void update_camera(Game* e, float dt) {
     e->cam.setRotation(vec3(e->cam_pitch, e->cam_yaw, 0.0f));
 }
 
-// Rewrite dyn_tris_ = [sphere + ball.pos | racket + racket.pos] in place. The
-// racket half is dropped (resize down, no realloc — capacity is fixed in
-// game_init) when the racket is disabled by a demo stage. Normals/material are
-// translation-invariant, so only the three positions change.
+
+
+
+
 static void refresh_dyn_tris(Game* e) {
     const std::size_t ns = e->sphere_local_.size();
     const std::size_t nr = e->racket_enabled ? e->racket_local_.size() : 0;
@@ -134,9 +134,9 @@ static void refresh_dyn_tris(Game* e) {
     }
 }
 
-// ---------------------------------------------------------------------------
-// the game <-> render seam
-// ---------------------------------------------------------------------------
+
+
+
 
 static RenderScene make_render_scene(Game* e) {
     RenderScene s;
@@ -146,12 +146,12 @@ static RenderScene make_render_scene(Game* e) {
 
     s.static_bvh       = &e->static_bvh;
     s.dynamic_bvh      = &e->dynamic_bvh;
-    s.brute_tris       = &e->dyn_tris_;       // brute-force / Embree-dyn source
+    s.brute_tris       = &e->dyn_tris_;
     s.use_bvh          = true;
     s.static_strategy  = e->static_strategy;
     s.dynamic_strategy = e->dynamic_strategy;
 
-    e->raster_items.clear();                  // capacity kept across frames
+    e->raster_items.clear();
     if (e->court_mesh)
         e->raster_items.push_back({ e->court_mesh, pack_color(vec3(0.62f, 0.62f, 0.66f)), false });
     e->raster_items.push_back({ &e->sphere_mesh_, pack_color(e->sphere_albedo), false });
@@ -159,90 +159,90 @@ static RenderScene make_render_scene(Game* e) {
         e->raster_items.push_back({ &e->racket_mesh_, pack_color(e->racket_albedo), false });
     s.raster_items = &e->raster_items;
 
-    s.emissive       = nullptr;               // sun light only this phase
+    s.emissive       = nullptr;
     s.point_lights   = nullptr;
     s.skybox         = &e->skybox_faces;
     s.skybox_enabled = e->skybox_enabled;
     s.bg_color       = e->bg_color;
 
     s.sun_enabled = e->sun_enabled;
-    s.reflections = false;   // performance: no recursion this phase
+    s.reflections = false;
     s.max_bounces = 1;
     s.gi_enabled  = false;
     return s;
 }
 
-// ---------------------------------------------------------------------------
-// Technical Progress / Physics Evolution demo
-// ---------------------------------------------------------------------------
 
-// Just behind the table's near edge (half_len 1.37), at paddle height above
-// the surface -- the player's side, where the character placeholder stands.
+
+
+
+
+
 static const vec3 kRacketHome(0.0f, 0.95f, -1.55f);
 
-// Real racket model, loaded through the project's existing (and until now
-// unused) OBJ pipeline -- engine/assets/obj_loader.hpp -- rather than the
-// primitive box. See res/models/README.md for exactly what to place here;
-// Racket::append_local_tris_from_obj falls back to the box on its own if
-// this file is missing, so nothing breaks before that asset exists.
+
+
+
+
+
 static const char* kRacketModelPath = "res/models/racket.obj";
 
-// ---------------------------------------------------------------------------
-// GAMEPLAY racket control: mouse aim (X/Y only, Z fixed this checkpoint)
-// ---------------------------------------------------------------------------
 
-// World-space reach of the racket target at the window's edge, centred on
-// kRacketHome -- deliberately modest ("no quiero sensibilidad exagerada"):
-// roughly matches racket_limits' own half-extents (x: +-1.0, y: 0.70-1.30)
-// so a full mouse swing comfortably spans the play area without needing to
-// leave the window. The final clamp to racket_limits (inside Racket::step,
-// unchanged) is still the authority -- this is just a sane default reach.
-static constexpr float kMouseReachX = 1.0f;    // world units, X, at the left/right edge
-static constexpr float kMouseReachY = 0.30f;   // world units, Y, at the top/bottom edge
 
-// Hit window: slow motion + charge tunables (see game_update). Preparation
-// only this checkpoint -- charge is not yet used to affect the ball.
-static constexpr float kHitWindowTimeScale = 0.2f;   // dt multiplier for Ball::update while hit_window is open
-static constexpr float kTimeScaleLerpRate  = 8.0f;   // 1/s; how fast time_scale eases toward its target (real dt, not scaled)
-static constexpr float kChargeRate         = 1.0f;   // units/s; charge 0->1 in ~1 real second while LMB is held
 
-// Swing tunables (see perform_hit below). Simple and stable on purpose.
-static constexpr float kHitReach           = 0.45f;  // max ball<->racket distance (world units) for a release to register as a hit -- no hits "at a distance"
-static constexpr float kMinHitForce        = 2.5f;   // hit_strength at charge = 0
-static constexpr float kMaxHitForce        = 8.0f;   // hit_strength at charge = 1 (comparable scale to the ~7.1 u/s original serve, not an explosion)
-static constexpr float kRacketVelInfluence = 0.5f;   // how much of Racket::velocity() carries into the shot
-static constexpr float kHitUpBias          = 0.25f;  // small fixed upward lean blended into the base direction, so a neutral-aim shot still arcs instead of firing flat
-static constexpr float kMinHitForwardZ     = 1.5f;   // floor on the shot's +Z component -- "pelota sale hacia delante" always holds
-static constexpr float kMaxBallHitSpeed    = 10.0f;  // safety clamp on the resulting ball speed
-static constexpr float kHitFlashSeconds    = 0.6f;   // how long "HIT!" stays on the HUD after a successful swing
 
-// Aim tunables (compute_hit_direction below). aim_x/aim_y are the racket's
-// own position offset from kRacketHome, normalized to [-1,1] by these
-// reaches, THEN scaled by the strengths -- worst case (both maxed out) the
-// direction sits ~33 deg off the base forward direction, well short of an
-// extreme angle.
-static constexpr float kAimReachX          = 1.0f;   // world units, X, for a full +-1 aim deflection (matches racket_limits' own X half-extent)
-static constexpr float kAimReachY          = 0.30f;  // world units, Y, for a full +-1 aim deflection
-static constexpr float kAimSidewaysStrength = 0.45f; // max left/right contribution to the (normalized) hit direction
-static constexpr float kAimVerticalStrength = 0.20f; // max up/down contribution, on top of kHitUpBias
 
-// Spin tunables (compute_hit_spin below). Basic: driven directly by the
-// racket's velocity at the moment of the swing (vertical brush -> topspin/
-// backspin on spin.x, horizontal brush -> sidespin on spin.y) -- feeds
-// Ball::spin only; Ball::step_fixed's existing Magnus term does the actual
-// curving, untouched.
-static constexpr float kSpinFromRacketVel  = 4.0f;   // rad/s of spin per (u/s) of racket velocity
-static constexpr float kMaxSpinComponent   = 20.0f;  // rad/s, per-axis clamp (matches the scale already used by the Technical Progress demo's stage 3)
 
-// Cursor position -> racket target (world X/Y around kRacketHome; Z left at
-// the racket's CURRENT depth, untouched -- Q/E do not drive Z in this mode).
-// Uses the real OS cursor position (SDL_GetMouseState), not a relative-mode
-// delta: the cursor stays visible so the player aims with it directly (see
-// game_handle_events -- GAMEPLAY mode never calls SDL_SetRelativeMouseMode,
-// that stays exclusive to the free-fly camera's own mouse-look). Window size
-// is taken from e->fb (the size the window was created with); like the rest
-// of this engine, live window resizes aren't tracked, so this assumes a
-// stable window size, same as everywhere else.
+
+
+
+
+static constexpr float kMouseReachX = 1.0f;
+static constexpr float kMouseReachY = 0.30f;
+
+
+
+static constexpr float kHitWindowTimeScale = 0.2f;
+static constexpr float kTimeScaleLerpRate  = 8.0f;
+static constexpr float kChargeRate         = 1.0f;
+
+
+static constexpr float kHitReach           = 0.45f;
+static constexpr float kMinHitForce        = 2.5f;
+static constexpr float kMaxHitForce        = 8.0f;
+static constexpr float kRacketVelInfluence = 0.5f;
+static constexpr float kHitUpBias          = 0.25f;
+static constexpr float kMinHitForwardZ     = 1.5f;
+static constexpr float kMaxBallHitSpeed    = 10.0f;
+static constexpr float kHitFlashSeconds    = 0.6f;
+
+
+
+
+
+
+static constexpr float kAimReachX          = 1.0f;
+static constexpr float kAimReachY          = 0.30f;
+static constexpr float kAimSidewaysStrength = 0.45f;
+static constexpr float kAimVerticalStrength = 0.20f;
+
+
+
+
+
+
+static constexpr float kSpinFromRacketVel  = 4.0f;
+static constexpr float kMaxSpinComponent   = 20.0f;
+
+
+
+
+
+
+
+
+
+
 static vec3 mouse_racket_target(Game* e) {
     int mx = 0, my = 0;
     SDL_GetMouseState(&mx, &my);
@@ -250,22 +250,22 @@ static vec3 mouse_racket_target(Game* e) {
     float ny = e->fb.height > 0 ? (float)my / (float)e->fb.height * 2.0f - 1.0f : 0.0f;
     nx = std::clamp(nx, -1.0f, 1.0f);
     ny = std::clamp(ny, -1.0f, 1.0f);
-    // Screen Y grows downward; invert so moving the mouse UP moves the
-    // racket UP in world space.
+
+
     return vec3(kRacketHome.x + nx * kMouseReachX,
                 kRacketHome.y - ny * kMouseReachY,
                 e->racket.position().z);
 }
 
-// Hit direction: still rooted in the racket's own hitting face (+Z-ish --
-// "debe seguir existiendo una direccion base hacia el lado contrario de la
-// mesa"), but now steerable: blended with the racket's CURRENT position
-// offset from kRacketHome on X (left/right) and Y (up/down) -- i.e. where
-// the player has aimed the racket, via the mouse in GAMEPLAY mode or WASD
-// in DEBUG mode (both already move Racket::position(), read here exactly
-// like everything else reads it -- never raw screen pixels). Each axis is
-// normalized and clamped to [-1,1] before scaling, bounding the resulting
-// angle off the base direction regardless of how far the racket travels.
+
+
+
+
+
+
+
+
+
 static vec3 compute_hit_direction(Game* e) {
     const vec3  offset = e->racket.position() - kRacketHome;
     const float aim_x  = std::clamp(offset.x / kAimReachX, -1.0f, 1.0f);
@@ -279,14 +279,14 @@ static vec3 compute_hit_direction(Game* e) {
     return dir;
 }
 
-// Hit spin: a BASIC system, driven by Racket::velocity() at the moment of
-// the swing (already tracked by Racket::step, untouched here) -- vertical
-// racket motion (brushing up/down) becomes topspin/backspin on spin.x,
-// horizontal motion (brushing sideways) becomes sidespin on spin.y. No
-// independent trajectory prediction, no new Magnus model: this only ever
-// WRITES Ball::spin; the existing `magnus * cross(spin, vel)` term in
-// Ball::step_fixed is what actually curves the flight, completely
-// untouched. Clamped per axis to a modest, already-demonstrated range.
+
+
+
+
+
+
+
+
 static vec3 compute_hit_spin(Game* e) {
     const vec3 rv = e->racket.velocity();
     const float sx = std::clamp(rv.y * kSpinFromRacketVel, -kMaxSpinComponent, kMaxSpinComponent);
@@ -294,14 +294,14 @@ static vec3 compute_hit_spin(Game* e) {
     return vec3(sx, sy, 0.0f);
 }
 
-// Converts the accumulated charge into a new ball velocity -- a scripted
-// gameplay "swing", not a physics contact response. Called only from the
-// LMB-up handler in game_handle_events, only while a charge is in flight
-// inside an open hit_window. Reuses exactly what already exists (Racket::
-// position/face_normal/velocity, Ball::pos, Game::charge) -- no new
-// collision system, Obb::resolve is never called here. Returns false (no
-// effect on the ball) if the ball was out of reach -- "no golpes magicos a
-// distancia"; the caller still resolves the charge session either way.
+
+
+
+
+
+
+
+
 static bool perform_hit(Game* e) {
     const float dist = magnitude(e->ball.pos - e->racket.position());
     if (dist > kHitReach) {
@@ -314,29 +314,29 @@ static bool perform_hit(Game* e) {
     const vec3  dir         = compute_hit_direction(e);
     const vec3  spin        = compute_hit_spin(e);
 
-    // hit_strength = lerp(min_force, max_force, charge), combined with the
-    // racket's own swing velocity (Racket::velocity(), already tracked by
-    // Racket::step -- untouched here).
+
+
+
     const float hit_strength = kMinHitForce + (kMaxHitForce - kMinHitForce) * charge_used;
     vec3 new_vel = dir * hit_strength + e->racket.velocity() * kRacketVelInfluence;
 
-    // Always send the ball forward, away from the player -- guarantees
-    // "raqueta -> golpe -> pelota sale hacia delante" regardless of how the
-    // charge/racket-velocity combination came out.
+
+
+
     if (new_vel.z < kMinHitForwardZ) new_vel.z = kMinHitForwardZ;
 
     const float sp = magnitude(new_vel);
     if (sp > kMaxBallHitSpeed) new_vel = new_vel * (kMaxBallHitSpeed / sp);
 
-    // Place the ball just clear of the racket's own OBB along the hit
-    // direction (its half-extent along the face-normal axis + ball radius +
-    // a small margin) before this frame's Ball::update() runs -- so the
-    // ordinary per-substep Obb::resolve() (unmodified) doesn't immediately
-    // re-process the same contact against the brand-new velocity.
+
+
+
+
+
     const float clearance = e->racket.collider().half.z + e->ball.radius + 0.02f;
     e->ball.pos = e->racket.position() + dir * clearance;
-    e->ball.apply_hit(new_vel);   // velocity only -- unchanged, still just a setter
-    e->ball.spin = spin;          // feeds Ball::spin directly; Ball::step_fixed's existing Magnus term does the rest
+    e->ball.apply_hit(new_vel);
+    e->ball.spin = spin;
 
     e->charging = false;
     e->charge   = 0.0f;
@@ -349,7 +349,7 @@ static bool perform_hit(Game* e) {
     return true;
 }
 
-// Descriptions shown in the demo panel (index 0 = stage 1).
+
 static const char* kStageTitle[4] = {
     "STAGE 1 - BASIC BALL",
     "STAGE 2 - BASIC PHYSICS",
@@ -363,32 +363,32 @@ static const char* kStageBlurb[4] = {
     "The full game state: all of the above plus a movable,\ncontrollable racket and ball<->racket collision (dynamic BVH).",
 };
 
-// Switch the demo to `stage` (1..4): flip the physics feature set and re-seed
-// the ball with initial conditions that make that stage obvious. Stage 4 == the
-// full current game. The scene keeps running live; no historical code is rebuilt
-// — only the existing Ball tunables + the racket_enabled flag are toggled.
+
+
+
+
 static void apply_demo_stage(Game* e, int stage) {
     e->demo_stage = std::clamp(stage, 1, 4);
     Ball& b = e->ball;
-    // Regulation-table scale. The sphere's BVH/raster geometry is generated
-    // ONCE in game_init from whatever radius is active at that moment and
-    // never rebuilt (see sphere_local_), so every stage MUST share one
-    // radius here — otherwise a stage switch would desync the visible
-    // sphere size from its (now different) collision radius.
+
+
+
+
+
     b.radius     = 0.06f;
     b.spin_decay = 0.08f;
     b.rest_speed = 0.5f;
 
     switch (e->demo_stage) {
-        case 1:  // constant velocity, perfectly elastic, no forces
+        case 1:
             b.gravity = 0.0f;  b.drag = 0.0f;  b.magnus = 0.0f;
-            b.restitution = 1.0f;  b.rest_speed = 0.0f;      // never settle
+            b.restitution = 1.0f;  b.rest_speed = 0.0f;
             b.reset(vec3(-2.0f, 3.2f, 0.0f), vec3(3.4f, 2.4f, 1.7f), vec3(0.0f, 0.0f, 0.0f));
             e->racket_enabled = false;
             e->table_enabled  = false;
             e->wall_enabled   = false;
             break;
-        case 2:  // gravity + restitution
+        case 2:
             b.gravity = 9.81f; b.drag = 0.0f;  b.magnus = 0.0f;
             b.restitution = 0.75f;
             b.reset(vec3(-1.5f, 5.2f, 0.0f), vec3(2.6f, 0.4f, 0.5f), vec3(0.0f, 0.0f, 0.0f));
@@ -396,7 +396,7 @@ static void apply_demo_stage(Game* e, int stage) {
             e->table_enabled  = false;
             e->wall_enabled   = false;
             break;
-        case 3:  // + drag + spin + Magnus
+        case 3:
             b.gravity = 9.81f; b.drag = 0.10f; b.magnus = 0.10f;
             b.restitution = 0.75f;
             b.reset(vec3(-3.4f, 3.8f, 0.2f), vec3(3.4f, 0.8f, 0.0f), vec3(0.0f, 20.0f, 0.0f));
@@ -404,14 +404,14 @@ static void apply_demo_stage(Game* e, int stage) {
             e->table_enabled  = false;
             e->wall_enabled   = false;
             break;
-        case 4:  // full current game: mesa -> red -> pared -> mesa -> jugador,
-                 // under gravity + drag + spin + Magnus, unchanged.
+        case 4:
+
         default:
             b.gravity = 9.81f; b.drag = 0.10f; b.magnus = 0.10f;
             b.restitution = 0.88f;
-            // Serve from the player's side (z < 0, near the racket/character):
-            // clears the net at full height on the outbound leg, bounces once
-            // on the far half, hits the backdrop wall, and rebounds.
+
+
+
             b.reset(vec3(0.0f, 1.5f, -1.2f), vec3(0.0f, 2.1f, 6.8f), vec3(0.0f, 0.0f, 0.0f));
             e->racket_enabled = true;
             e->table_enabled  = true;
@@ -423,9 +423,9 @@ static void apply_demo_stage(Game* e, int stage) {
     e->hits_reported_ = 0;
 }
 
-// ---------------------------------------------------------------------------
-// public API
-// ---------------------------------------------------------------------------
+
+
+
 
 Game* game_create(int width, int height) {
     return new Game(width, height);
@@ -434,10 +434,10 @@ Game* game_create(int width, int height) {
 void game_rebuild_static(Game* e) {
     uint64_t t0 = SDL_GetPerformanceCounter();
 
-    // Open scene, not a closed arena: a floor for context/shadows, the table,
-    // and ONE backdrop wall flush against the table's far edge (+Z, the
-    // ball's travel direction) -- no side walls, no ceiling, so the table
-    // stays the visual centrepiece instead of a box around it.
+
+
+
+
     const vec3 floor_col(0.35f, 0.37f, 0.40f);
     const vec3 shirt_col(0.20f, 0.35f, 0.55f);
     const vec3 pants_col(0.15f, 0.15f, 0.18f);
@@ -445,41 +445,41 @@ void game_rebuild_static(Game* e) {
 
     std::vector<bvh::Tri> tris;
     tris.reserve(160);
-    geom::add_box(tris, vec3(-3.0f, -0.10f, -2.8f), vec3(3.0f, 0.0f, 2.6f), floor_col, 0.85f); // floor
+    geom::add_box(tris, vec3(-3.0f, -0.10f, -2.8f), vec3(3.0f, 0.0f, 2.6f), floor_col, 0.85f);
 
-    // Backdrop wall (surface + collider from the same e->wall fields -- see
-    // game_init for where inner_z is derived from table.half_len). Z sign
-    // confirmed from the scene, not assumed: the racket/character/camera all
-    // sit at z<0 (kRacketHome, camera default), the ball's default launch
-    // travels toward +Z, and the table spans z=[-half_len,+half_len] -- so
-    // +Z past half_len is the far end, on the opposite side from the player.
+
+
+
+
+
+
     e->wall.append_tris(tris);
 
-    // Regulation table (surface + edge lines + net + legs), centred at the
-    // scene origin. Dimensions come from e->table so the visual mesh and the
-    // ball's surface collider (Table::resolve) can never drift apart.
+
+
+
     e->table.append_tris(tris);
 
-    // Player character: a simple blocky placeholder (legs + torso + head, no
-    // skinning/animation) standing on the near side, behind the racket, so
-    // the composition reads as a table-tennis scene rather than an empty
-    // paddle floating in space.
-    geom::add_box(tris, vec3(-0.14f, 0.0f,  -2.16f), vec3(0.14f, 0.90f, -1.94f), pants_col, 0.60f); // legs
-    geom::add_box(tris, vec3(-0.18f, 0.90f, -2.18f), vec3(0.18f, 1.55f, -1.92f), shirt_col, 0.55f); // torso
-    geom::add_box(tris, vec3(-0.10f, 1.55f, -2.15f), vec3(0.10f, 1.75f, -1.95f), skin_col,  0.50f); // head
 
-    // The racket is dynamic now (movable) -> it lives in the DYNAMIC BVH, not
-    // here. Only the immovable floor + wall + table + character are static.
+
+
+
+    geom::add_box(tris, vec3(-0.14f, 0.0f,  -2.16f), vec3(0.14f, 0.90f, -1.94f), pants_col, 0.60f);
+    geom::add_box(tris, vec3(-0.18f, 0.90f, -2.18f), vec3(0.18f, 1.55f, -1.92f), shirt_col, 0.55f);
+    geom::add_box(tris, vec3(-0.10f, 1.55f, -2.15f), vec3(0.10f, 1.75f, -1.95f), skin_col,  0.50f);
+
+
+
     e->static_tri_count = tris.size();
 
     delete e->court_mesh;
     e->court_mesh = new mesh;
     fill_raster_mesh(*e->court_mesh, tris);
 
-    e->static_bvh.build(std::move(tris), e->static_strategy);   // SAH, once
+    e->static_bvh.build(std::move(tris), e->static_strategy);
     e->static_build_ms = ms_since(t0);
 
-    e->emissive_tris.clear();   // none, but keep the pattern for later phases
+    e->emissive_tris.clear();
     e->renderer.reload_scene(e->static_bvh, e->skybox_faces, e->emissive_tris);
 
     std::cout << "Static arena: " << e->static_bvh.triangle_count() << " tris, "
@@ -499,73 +499,73 @@ void game_init(Game* e) {
     load_png_texture("res/textures/skybox3/null_plainsky512_up.png", e->skybox_faces[4]);
     load_png_texture("res/textures/skybox3/null_plainsky512_dn.png", e->skybox_faces[5]);
 
-    // --- backdrop wall: flush against the table's far edge, only a small gap
-    //     (kWallGap) to avoid z-fighting with the table's surface/edge tris.
-    //     Single source of truth for both the mesh (game_rebuild_static) and
-    //     the collider (Ball::step_fixed) -- e->wall itself, not a second,
-    //     separately-tracked coordinate. ---
+
+
+
+
+
     const float kWallGap = 0.04f;
     e->wall.inner_z = e->table.half_len + kWallGap;
 
-    // --- arena (invisible physics bound; the visible walls are gone) ---
-    // Z max is pushed well past the backdrop wall so the ball's forward
-    // flight is never reflected back by this bound before it can reach the
-    // wall's own (now real) collider.
+
+
+
+
     e->arena.min = vec3(-4.0f, 0.0f, -3.5f);
     e->arena.max = vec3( 4.0f, 6.0f, 12.0f);
 
-    // --- movable racket: a paddle the player translates. Orientation and size
-    //     are fixed; only the position moves (step()). Table-tennis-paddle
-    //     scale (was oversized at 1.8 units -- comically large next to the
-    //     0.06-radius ball), held at the player's side just behind the
-    //     table's near edge. ---
-    e->racket.configure(/*pos*/   kRacketHome,
-                        /*euler*/ vec3(to_radians(8.0f), to_radians(-6.0f), 0.0f),
-                        /*size*/  vec3(0.32f, 0.34f, 0.03f),
-                        /*restitution*/ 0.85f);
-    e->racket_speed     = 5.0f;
-    e->racket_limits.min = vec3(-1.0f, 0.70f, -1.90f);   // stays near the player's side of
-    e->racket_limits.max = vec3( 1.0f, 1.30f, -1.20f);   // the table, clear of the floor
 
-    // --- ball: seed with the full-game (stage 4) feature set ---
+
+
+
+
+    e->racket.configure(   kRacketHome,
+                         vec3(to_radians(8.0f), to_radians(-6.0f), 0.0f),
+                          vec3(0.32f, 0.34f, 0.03f),
+                         0.85f);
+    e->racket_speed     = 5.0f;
+    e->racket_limits.min = vec3(-1.0f, 0.70f, -1.90f);
+    e->racket_limits.max = vec3( 1.0f, 1.30f, -1.20f);
+
+
     apply_demo_stage(e, 4);
 
-    // --- dynamic geometry: sphere + racket, generated ONCE at the origin ---
+
     e->sphere_local_.clear();
     geom::add_sphere(e->sphere_local_, vec3(0.0f, 0.0f, 0.0f), e->ball.radius,
-                     e->sphere_albedo, /*rough*/ 0.55f, /*metal*/ 0.0f, /*ior*/ 1.5f,
-                     /*slices*/ 20, /*stacks*/ 14, /*smooth*/ true);
+                     e->sphere_albedo,  0.55f,  0.0f,  1.5f,
+                      20,  14,  true);
     e->racket_local_.clear();
-    // Real racket model if res/models/racket.obj exists (see res/models/README.md
-    // for the asset spec); falls back to the primitive box otherwise -- either
-    // way the result is local-space, origin-centred, orientation already baked
-    // in (see Racket::append_local_tris_from_obj), so refresh_dyn_tris below
-    // still only needs to translate it by position() every frame, unchanged.
+
+
+
+
+
     e->racket.append_local_tris_from_obj(kRacketModelPath, e->racket_local_);
 
     e->dyn_tris_.clear();
     e->dyn_tris_.reserve(e->sphere_local_.size() + e->racket_local_.size());
-    // refresh_dyn_tris (below) resizes within this capacity and fills it — the
-    // racket half is included only while racket_enabled.
 
-    fill_raster_mesh(e->sphere_mesh_, e->sphere_local_);   // local space; moved via setPosition
+
+
+    fill_raster_mesh(e->sphere_mesh_, e->sphere_local_);
     fill_raster_mesh(e->racket_mesh_, e->racket_local_);
 
     e->raster_items.reserve(3);
 
-    // --- build BVHs ---
+
     game_rebuild_static(e);
     refresh_dyn_tris(e);
-    e->dynamic_bvh.build(e->dyn_tris_, e->dynamic_strategy);   // Morton
+    e->dynamic_bvh.build(e->dyn_tris_, e->dynamic_strategy);
     e->sphere_mesh_.setPosition(e->ball.pos);
     e->racket_mesh_.setPosition(e->racket.position());
 
-    // --- renderer ---
+
     int req = global_config.num_workers;
     if (req <= 0) req = SDL_GetCPUCount();
     e->num_workers = std::clamp(req, 1, 64);
 
-    e->renderer.init(e->num_workers, /*max_bounces*/ 1, kAmbient, kShadowEps);
+    e->renderer.init(e->num_workers,  1, kAmbient, kShadowEps);
     e->renderer.upload_static(e->static_bvh, e->skybox_faces, e->emissive_tris);
 
     e->metrics.primary_rays = (std::size_t)e->fb.width * (std::size_t)e->fb.height;
@@ -581,27 +581,27 @@ void game_init(Game* e) {
               << e->renderer.current_name() << "'\n";
 }
 
-// Player intent for the racket this frame: -1/0/+1 per axis from the existing
-// SDL keyboard state (WASD or arrows on X/Y, Q/E on Z). --racket-auto /
-// --racket-flee replace it with an automatic move so headless tests are
-// reproducible.
-static vec3 racket_input(Game* e, float /*dt*/) {
+
+
+
+
+static vec3 racket_input(Game* e, float ) {
     if (e->racket_autopilot != 0) {
-        // Test affordance only (headless runs). Both modes track the ball in Y.
-        //   mode 1 "chase":  close in on the ball in X       -> paddle moving into the ball
-        //   mode 2 "recede": give ground in X as it closes   -> paddle moving away at contact
-        // Per-axis intent, capped by racket_speed + limits. The real keyboard
-        // input path below is untouched.
+
+
+
+
+
         vec3 to_ball = e->ball.pos - e->racket.position();
         vec3 d(0.0f, 0.0f, 0.0f);
         if (std::fabs(to_ball.y) > 0.05f) d.y = to_ball.y > 0.0f ? 1.0f : -1.0f;
         if (e->racket_autopilot == 1) {
-            // chase: close in on the ball -> paddle moving INTO the ball
+
             if (std::fabs(to_ball.x) > 0.05f) d.x = to_ball.x > 0.0f ? 1.0f : -1.0f;
         } else {
-            // recede: keep aligned in Z, but stay ~1.6 u ahead of the ball in
-            // its X travel direction, so the paddle runs the same way the ball
-            // flies and is moving AWAY from it at contact.
+
+
+
             if (std::fabs(to_ball.z) > 0.05f) d.z = to_ball.z > 0.0f ? 1.0f : -1.0f;
             float lead = (e->ball.vel.x >= 0.0f) ? 1.6f : -1.6f;
             float dx   = (e->ball.pos.x + lead) - e->racket.position().x;
@@ -609,13 +609,13 @@ static vec3 racket_input(Game* e, float /*dt*/) {
         }
         return d;
     }
-    // Free-fly camera mode (toggle: C) takes WASD/Q/E for itself (see
-    // update_camera) -- freeze the racket rather than have both read the
-    // same keys the same frame.
+
+
+
     if (e->free_cam) return vec3(0.0f, 0.0f, 0.0f);
     const Uint8* k = SDL_GetKeyboardState(nullptr);
-    // While the demo panel is open the arrow keys drive stage navigation, so the
-    // racket then only responds to WASD + Q/E.
+
+
     const bool arrows = !e->demo_open;
     vec3 d(0.0f, 0.0f, 0.0f);
     if ((arrows && k[SDL_SCANCODE_LEFT])  || k[SDL_SCANCODE_A]) d.x -= 1.0f;
@@ -628,24 +628,24 @@ static vec3 racket_input(Game* e, float /*dt*/) {
 }
 
 void game_update(Game* e, float dt) {
-    update_camera(e, dt);   // independent of physics; fixed view unless free_cam
+    update_camera(e, dt);
 
-    // Move the racket first, so the ball resolves against its new position.
-    // Demo stages 1-3 disable the racket entirely.
+
+
     if (e->racket_enabled) {
-        // GAMEPLAY (mouse aim): chase the cursor's world-space target instead
-        // of the fixed-speed WASD direction. Still goes through Racket::step
-        // unchanged -- only how `dir` and `speed` are computed differs. The
-        // per-frame speed is capped at (distance-to-target / dt) so the
-        // racket arrives AT the target and stops instead of overshooting and
-        // jittering back and forth every frame (Racket::step always moves at
-        // exactly the `speed` given, along a re-normalized `dir` -- it has no
-        // built-in easing, so the easing has to happen here, in the speed we
-        // pass it, not in Racket itself). Autopilot (headless tests) and
-        // free-fly camera keep first refusal, same as the WASD path below.
+
+
+
+
+
+
+
+
+
+
         if (e->racket_autopilot == 0 && !e->free_cam && e->racket_mouse_mode) {
             vec3 to_target = mouse_racket_target(e) - e->racket.position();
-            to_target.z = 0.0f;   // Z stays fixed this checkpoint -- no depth aim yet
+            to_target.z = 0.0f;
             float dist = magnitude(to_target);
             vec3  dir  = dist > 1e-4f ? to_target / dist : vec3(0.0f, 0.0f, 0.0f);
             float step_speed = std::min(e->racket_speed, dist / std::max(dt, 1e-6f));
@@ -655,15 +655,15 @@ void game_update(Game* e, float dt) {
         }
     }
 
-    // Hit-window slow motion: ease time_scale toward its target (0.2 inside
-    // the window from last frame, 1.0 outside) using the REAL dt -- the
-    // transition itself must not be scaled, or leaving the window would take
-    // just as long (in slowed time) as entering it, instead of recovering at
-    // normal speed. Only the dt handed to Ball::update below is multiplied
-    // by the result: Ball::step_fixed, its fixed sub-step and every equation
-    // in it are completely untouched -- slow motion here just means "consume
-    // real time more slowly", i.e. fewer fixed sub-steps per real second,
-    // not different physics.
+
+
+
+
+
+
+
+
+
     {
         const float target = e->hit_window ? kHitWindowTimeScale : 1.0f;
         const float rate   = std::clamp(kTimeScaleLerpRate * dt, 0.0f, 1.0f);
@@ -671,48 +671,48 @@ void game_update(Game* e, float dt) {
     }
     const float sim_dt = dt * e->time_scale;
 
-    // Ball::update consumes sim_dt (real dt scaled by time_scale) with its own
-    // internal fixed physics sub-step, so the trajectory stays frame-rate
-    // independent regardless of time_scale (and it clamps a hitching dt
-    // itself — no spiral of death). The racket collider carries its velocity, so
-    // the ball's contact response depends on the ball-vs-racket relative motion.
-    // The racket itself was already stepped above using the REAL dt (not
-    // sim_dt) -- the player's own aim/reaction stays at normal speed while
-    // only the ball's flight is slowed, which is the point of the window.
+
+
+
+
+
+
+
+
     uint64_t tp = SDL_GetPerformanceCounter();
     e->bounces_total += e->ball.update(sim_dt, e->arena,
                                        e->racket_enabled ? &e->racket.collider() : nullptr,
                                        e->table_enabled  ? &e->table            : nullptr,
                                        e->wall_enabled   ? &e->wall             : nullptr);
-    refresh_dyn_tris(e);                           // in-place, no allocation
-    e->sphere_mesh_.setPosition(e->ball.pos);      // raster mirrors follow
+    refresh_dyn_tris(e);
+    e->sphere_mesh_.setPosition(e->ball.pos);
     e->racket_mesh_.setPosition(e->racket.position());
     e->metrics.physics_ms = Metrics::ema(e->metrics.physics_ms, ms_since(tp));
 
-    // Hit-window detection: true while the ball is on its way toward the
-    // player's side, inside a generous z-band around the racket's own depth
-    // range. Simple position+velocity check on the just-updated ball state,
-    // no new state machine -- matches the existing plain-bool-flag style
-    // already used for racket/table/wall enable flags above. A successful
-    // swing (perform_hit) sends the ball back out with vel.z > 0, so this
-    // same check naturally flips hit_window false again on the very next
-    // evaluation -- nothing special needed to "end" the window after a hit.
+
+
+
+
+
+
+
+
     {
-        const float kHitWindowNearZ = e->racket_limits.max.z + 0.30f;   // starts a bit before the racket's own z range
-        const float kHitWindowFarZ  = e->racket_limits.min.z - 0.30f;   // ends a bit past it (ball behind the player)
+        const float kHitWindowNearZ = e->racket_limits.max.z + 0.30f;
+        const float kHitWindowFarZ  = e->racket_limits.min.z - 0.30f;
         e->hit_window = (e->ball.vel.z < 0.0f)
                       && (e->ball.pos.z <= kHitWindowNearZ)
                       && (e->ball.pos.z >= kHitWindowFarZ);
     }
 
-    // Charge: accumulates at a fixed real-time rate while LMB is held AND
-    // the window is still open (caso 2); if the window closes while still
-    // held, the in-progress charge is cancelled outright rather than kept
-    // (caso 3 -- an interrupted charge is not a "final" one). Uses the REAL
-    // dt, same reasoning as the racket above: charging is a player action,
-    // not part of the slowed simulation. Releasing LMB (game_handle_events)
-    // is what actually consumes a charge into a swing via perform_hit -- this
-    // block only ever cancels, never applies a hit.
+
+
+
+
+
+
+
+
     if (!e->hit_window && e->charging) {
         e->charging = false;
         e->charge   = 0.0f;
@@ -720,11 +720,11 @@ void game_update(Game* e, float dt) {
         e->charge = std::clamp(e->charge + kChargeRate * dt, 0.0f, 1.0f);
     }
 
-    // "HIT!" HUD flash: a plain countdown, no timer/animation system.
+
     if (e->hit_flash_timer > 0.0f) e->hit_flash_timer = std::max(0.0f, e->hit_flash_timer - dt);
 
-    // One line per racket contact (--debug): incoming/outgoing ball speed and
-    // the racket speed at impact, to see the velocity transfer.
+
+
     if (global_config.debug_mode && e->ball.racket_hits != e->hits_reported_) {
         e->hits_reported_ = e->ball.racket_hits;
         std::printf("[hit] racket #%ld  ball |v| %.2f -> %.2f  (dV %+.2f)  racket |v|=%.2f\n",
@@ -733,21 +733,21 @@ void game_update(Game* e, float dt) {
         std::fflush(stdout);
     }
 
-    // Frame order: update -> build dynamic BVH -> render.
+
     uint64_t tb = SDL_GetPerformanceCounter();
-    e->dynamic_bvh.build(e->dyn_tris_, e->dynamic_strategy);   // Morton, per frame
+    e->dynamic_bvh.build(e->dyn_tris_, e->dynamic_strategy);
     e->metrics.dyn_build_ms = Metrics::ema(e->metrics.dyn_build_ms, ms_since(tb));
 }
 
-// The Technical Progress panel (T). Explains what each stage achieved and shows
-// live readouts for the currently selected stage. Uses only the existing text
-// HUD; no new UI system.
+
+
+
 static void draw_demo_panel(Game* e, double fps) {
     const Ball& b = e->ball;
-    const int   s = e->demo_stage;                    // 1..4
+    const int   s = e->demo_stage;
     auto chk = [](bool on) { return on ? "[x]" : "[ ]"; };
 
-    // Feature set per stage (matches apply_demo_stage).
+
     const bool f_grav   = (s >= 2);
     const bool f_rest   = (s >= 2);
     const bool f_drag   = (s >= 3);
@@ -818,16 +818,16 @@ void game_render(Game* e, SDL_Texture* sdl_fb_texture, float dt) {
 
     RenderScene scene = make_render_scene(e);
     uint64_t tr = SDL_GetPerformanceCounter();
-    e->renderer.render(scene, e->fb);              // single dispatch point
+    e->renderer.render(scene, e->fb);
     e->metrics.render_ms = Metrics::ema(e->metrics.render_ms, ms_since(tr));
 
     const Metrics& m = e->metrics;
     std::size_t tris = e->static_bvh.triangle_count() + e->dynamic_bvh.triangle_count();
     double fps = m.frame_ms > 0.0 ? 1000.0 / m.frame_ms : 0.0;
 
-    // Headless perf telemetry (enable with --debug): one line every ~2 s of
-    // wall-clock so the checkpoint numbers (and dt-independence) are visible
-    // without a screenshot.
+
+
+
     static uint64_t t_start = SDL_GetPerformanceCounter();
     static double   next_log = 2.0;
     double elapsed = double(SDL_GetPerformanceCounter() - t_start) / double(SDL_GetPerformanceFrequency());
@@ -852,18 +852,18 @@ void game_render(Game* e, SDL_Texture* sdl_fb_texture, float dt) {
 
         vec3 rp = e->racket.position(), rv = e->racket.velocity();
 
-        // Live AIM/SPIN preview -- exactly what perform_hit would use if LMB
-        // were released right now (same helpers, so the HUD can never drift
-        // out of sync with the actual swing). aim_x/aim_y recomputed inline
-        // (same two lines compute_hit_direction uses) since the HUD wants
-        // the raw normalized values, not the blended 3D direction.
+
+
+
+
+
         const vec3  aim_offset = e->racket.position() - kRacketHome;
         const float aim_x = std::clamp(aim_offset.x / kAimReachX, -1.0f, 1.0f);
         const float aim_y = std::clamp(aim_offset.y / kAimReachY, -1.0f, 1.0f);
         const vec3  live_spin = compute_hit_spin(e);
 
-        // Minimal ASCII power bar (10 chars) -- no new render primitives, no
-        // per-frame allocation, just text through the existing draw_text HUD.
+
+
         char power_bar[11];
         {
             int filled = (int)(e->charge * 10.0f + 0.5f);
@@ -918,8 +918,8 @@ void game_render(Game* e, SDL_Texture* sdl_fb_texture, float dt) {
 void game_handle_events(Game* e, SDL_Event& event, bool& running) {
     if (event.type == SDL_QUIT) { running = false; return; }
 
-    // Mouse wheel adjusts the free-fly camera's move speed (a no-op, and
-    // otherwise unused, while the racket owns WASD/Q/E).
+
+
     if (event.type == SDL_MOUSEWHEEL) {
         if (e->free_cam && event.wheel.y != 0) {
             float factor = event.wheel.y > 0 ? 1.15f : 1.0f / 1.15f;
@@ -928,21 +928,21 @@ void game_handle_events(Game* e, SDL_Event& event, bool& running) {
         return;
     }
 
-    // LMB charges hit power, but only while a hit window is actually open
-    // (and not while free-fly owns the mouse). Starting the charge is an
-    // edge (button-down) event, same as every other discrete control in
-    // this function; the charge VALUE itself increases continuously in
-    // game_update while e->charging stays true (see there).
+
+
+
+
+
     if (event.type == SDL_MOUSEBUTTONDOWN && event.button.button == SDL_BUTTON_LEFT) {
         if (e->hit_window && !e->free_cam) e->charging = true;
         return;
     }
-    // Releasing resolves the charge session one way or the other: if the
-    // window is still open, try to convert it into a swing (perform_hit --
-    // itself gated by ball<->racket proximity, "no golpes magicos a
-    // distancia"); otherwise, or if the ball was out of reach, the charge is
-    // cancelled outright rather than left lying around for some later,
-    // unrelated release to consume.
+
+
+
+
+
+
     if (event.type == SDL_MOUSEBUTTONUP && event.button.button == SDL_BUTTON_LEFT) {
         if (e->charging) {
             bool hit = e->hit_window && perform_hit(e);
@@ -955,24 +955,24 @@ void game_handle_events(Game* e, SDL_Event& event, bool& running) {
 
     const SDL_Keycode k = event.key.keysym.sym;
 
-    // C toggles the free-fly camera (mouse-look + WASD/Q/E move it instead of
-    // the racket; wheel adjusts its speed). Captures/releases the cursor so
-    // mouse-look deltas are relative, matching the base engine's free-fly.
+
+
+
     if (k == SDLK_c) {
         e->free_cam = !e->free_cam;
         SDL_SetRelativeMouseMode(e->free_cam ? SDL_TRUE : SDL_FALSE);
-        if (e->free_cam) SDL_GetRelativeMouseState(nullptr, nullptr);   // discard stale delta
+        if (e->free_cam) SDL_GetRelativeMouseState(nullptr, nullptr);
         std::cout << "Camera: " << (e->free_cam
             ? "FREE  (mouse-look, WASD move, Q/E up/down, wheel = speed)"
             : "FIXED (WASD / Q/E control the racket)") << "\n";
         return;
     }
 
-    // M toggles the racket's control mode: GAMEPLAY (mouse aims X/Y, cursor
-    // stays visible -- no relative mouse mode, unlike C's free-fly) versus
-    // DEBUG/MANUAL (the original WASD/arrows + Q/E path, untouched). Doesn't
-    // interact with C: free-fly still takes the keyboard/mouse for itself
-    // regardless of this flag (see racket_input / game_update).
+
+
+
+
+
     if (k == SDLK_m) {
         e->racket_mouse_mode = !e->racket_mouse_mode;
         std::cout << "Racket control: " << (e->racket_mouse_mode
@@ -981,8 +981,8 @@ void game_handle_events(Game* e, SDL_Event& event, bool& running) {
         return;
     }
 
-    // T toggles the Technical Progress demo. Leaving it restores the full game
-    // (stage 4); the last stage is remembered for the next open.
+
+
     if (k == SDLK_t) {
         e->demo_open = !e->demo_open;
         apply_demo_stage(e, e->demo_open ? e->demo_stage : 4);
@@ -1008,11 +1008,11 @@ void game_handle_events(Game* e, SDL_Event& event, bool& running) {
             std::cout << kStageTitle[e->demo_stage - 1] << "\n";
             return;
         }
-        // TAB / G still cycle the backend while the demo is open.
+
     }
 
     switch (k) {
-        case SDLK_ESCAPE: running = false;        break;   // (demo closed only)
+        case SDLK_ESCAPE: running = false;        break;
         case SDLK_TAB:    e->renderer.cycle(-1);  break;
         case SDLK_g:      e->renderer.cycle(+1);  break;
         default: break;

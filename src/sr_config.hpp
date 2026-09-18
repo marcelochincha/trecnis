@@ -5,10 +5,10 @@
 #include <iostream>
 
 #ifndef W_WIDTH
-#define W_WIDTH 480
+#define W_WIDTH 320
 #endif
 #ifndef W_HEIGHT
-#define W_HEIGHT 360
+#define W_HEIGHT 240
 #endif
 #define TARGET_FPS 60.0f
 #define AUDIO_RATE 8192 * 2
@@ -21,7 +21,7 @@ struct config
     float target_fps;
     int audio_rate;
     bool debug_mode;
-    int  num_workers; // CPU render threads; -1 = all hardware threads
+    int  num_workers;
 
     config()
         : window_width(W_WIDTH),

@@ -3,7 +3,7 @@
 #include <cmath>
 #include "sr_vec.hpp"
 
-//Column -major 4x4 matrix
+
 struct mat4
 {
     float m[16] = {};
@@ -14,10 +14,10 @@ struct mat4
     {
         for (int i = 0; i < 16; ++i)
             m[i] = (i % 5 == 0) ? diagonal : 0.0f;
-        //m[15] = 1.0f; // Homogeneous coordinate
+
     }
 
-    // Glm style constructor for convenience
+
     mat4(
         float c0rX, float c0rY, float c0rZ, float c0rW,
         float c1rX, float c1rY, float c1rZ, float c1rW,
@@ -62,7 +62,7 @@ struct mat4
         m[15] = col3.w;
     }
 
-    // Access operator
+
     inline float &operator()(int row, int col)
     {
         return m[col * 4 + row];
@@ -74,7 +74,7 @@ struct mat4
     }
 };
 
-// mat4 operators
+
 inline mat4 operator*(const mat4 &a, const mat4 &b)
 {
     mat4 result;
@@ -89,9 +89,9 @@ inline mat4 operator*(const mat4 &a, const mat4 &b)
         }
     }
     return result;
-}   
+}
 
-// Assumes vec3.w = 1.0f
+
 inline vec4 operator*(const mat4 &m, const vec3 &v)
 {
     return vec4(
@@ -110,7 +110,7 @@ inline vec4 operator*(const mat4 &m, const vec4 &v)
         v.x * m.m[3] + v.y * m.m[7] + v.z * m.m[11] + v.w * m.m[15]);
 }
 
-// Transformation matrices
+
 inline mat4 translationMatrix(const vec3 &translation)
 {
     mat4 result(1.0f);
@@ -120,7 +120,7 @@ inline mat4 translationMatrix(const vec3 &translation)
     return result;
 }
 
-// Returns rotated matrix by axis (axis must be normalized)
+
 inline mat4 rotationMatrix(float r_angle, const vec3 &n)
 {
     float c = cosf(r_angle);
@@ -156,16 +156,16 @@ inline mat4 transpose(const mat4 &m)
 
 
 
-// Returns a rotation matrix from Euler angles (in radians) IN ZYX order (yaw-pitch-roll)
-inline mat4 rotationMatrix(float pitch, float yaw, float roll) // Euler angles in radians
+
+inline mat4 rotationMatrix(float pitch, float yaw, float roll)
 {
     mat4 rx = rotationMatrix(-pitch, vec3(1, 0, 0));
     mat4 ry = rotationMatrix(-yaw, vec3(0, 1, 0));
     mat4 rz = rotationMatrix(-roll, vec3(0, 0, 1));
-    return rz * ry * rx; // ZYX order
+    return rz * ry * rx;
 }
 
-//Returns the Euler angles (in radians) from a rotation matrix (assuming ZYX order)
+
 inline vec3 getEulerAngles(const mat4 &m)
 {
     float pitch, yaw, roll;
@@ -179,7 +179,7 @@ inline vec3 getEulerAngles(const mat4 &m)
         }
         else
         {
-            // Not a unique solution: roll - pitch = atan2(-m10,m11)
+
             yaw = SR_PI / 2.0f;
             pitch = atan2f(-m(1, 0), m(1, 1));
             roll = 0;
@@ -187,7 +187,7 @@ inline vec3 getEulerAngles(const mat4 &m)
     }
     else
     {
-        // Not a unique solution: roll + pitch = atan2(-m10,m11)
+
         yaw = -SR_PI / 2.0f;
         pitch = atan2f(-m(1, 0), m(1, 1));
         roll = 0;

@@ -32,7 +32,7 @@ void CpuTracer::dispatch() {
 void CpuTracer::render(const RenderScene& scene, framebuffer& fb) {
     job_scene_ = &scene;
     job_fb_    = &fb;
-    dispatch();   // trace every stripe straight into the framebuffer
+    dispatch();
 }
 
 int CpuTracer::worker_entry(void* arg) {

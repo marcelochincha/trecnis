@@ -1,61 +1,61 @@
 #pragma once
-// Racket: a user-movable oriented paddle (thin box).
-//
-// This checkpoint the racket can be translated by the player; its orientation
-// and dimensions stay as configured. It contributes:
-//   - 12 shaded triangles (local space, orientation baked) for the DYNAMIC BVH
-//     and a raster mesh — the caller translates them to position() each frame
-//   - an Obb collider (its centre tracks position()) for the physics step
-//
-// It never touches the renderer or the BVH directly. Its velocity is derived
-// from the movement for telemetry only — it is NOT fed into the ball's collision
-// response this checkpoint.
+
+
+
+
+
+
+
+
+
+
+
 
 #include <string>
 #include <vector>
 #include <math/sr_math.hpp>
-#include <render/raytrace/bvh.hpp>   // bvh::Tri
-#include <game/ball.hpp>             // Obb
+#include <render/raytrace/bvh.hpp>
+#include <game/ball.hpp>
 
 class Racket {
 public:
-    // One-time setup. `euler` is (pitch, yaw, roll) in radians; `size` is the
-    // full box extents (width, height, thickness). Orientation and size are
-    // fixed after this — only the position moves (step()).
+
+
+
     void configure(const vec3& pos, const vec3& euler, const vec3& size,
                    float restitution);
 
-    // Translate by `dir` (per-axis intent, need not be unit) at `speed` u/s for
-    // `dt` seconds, clamped so the centre stays inside `limits`. Recomputes the
-    // velocity from the actual displacement and moves the collider centre.
+
+
+
     void step(const vec3& dir, const AABB& limits, float dt, float speed);
 
-    // Snap the paddle back to `pos` with zero velocity (orientation/size kept).
+
     void recenter(const vec3& pos);
 
-    // 12 shaded triangles: box centred at the ORIGIN with the configured
-    // orientation baked in. The caller adds position() each frame.
+
+
     void append_local_tris(std::vector<bvh::Tri>& out) const;
 
-    // Visual-only alternative to append_local_tris: loads a real racket
-    // model (OBJ, via engine/assets/obj_loader's load_obj_tris -- the only
-    // mesh-import path this project already has) instead of the primitive
-    // box, in the SAME local space: origin-centred, with the configured
-    // orientation (the same rotation append_local_tris' box already uses)
-    // baked in, so the caller can translate-only by position() every frame
-    // exactly as before. The model is auto-centred on its own bounding box
-    // and uniformly rescaled to roughly match `size`, so it doesn't need to
-    // be authored at any particular scale -- but it DOES need +Z as the
-    // blade's hitting face (matches face_normal()), +Y "up" toward the
-    // head, +X lateral, i.e. the same local axes the box already uses.
-    // Falls back to append_local_tris (the primitive box) if `path` can't
-    // be loaded, so a missing asset never breaks the scene. Purely visual:
-    // never touches obb_ or any other physics state.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
     void append_local_tris_from_obj(const std::string& path, std::vector<bvh::Tri>& out) const;
 
     const Obb&  collider()    const { return obb_; }
     vec3        position()    const { return pos_; }
-    vec3        velocity()    const { return vel_; }   // telemetry only
+    vec3        velocity()    const { return vel_; }
     vec3        face_normal() const { return obb_.axis[2]; }
     std::size_t tri_count()   const { return 12; }
 

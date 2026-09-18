@@ -10,8 +10,8 @@ void Wall::append_tris(std::vector<bvh::Tri>& out) const {
 bool Wall::resolve(vec3& pos, vec3& vel, float radius, float restitution) const {
     if (pos.x < -half_width || pos.x > half_width) return false;
     if (pos.y < 0.0f || pos.y > height)             return false;
-    if (pos.z + radius < inner_z)                   return false;   // hasn't reached the face yet
-    if (vel.z <= 0.0f)                               return false;  // only stop an approach (+Z)
+    if (pos.z + radius < inner_z)                   return false;
+    if (vel.z <= 0.0f)                               return false;
 
     pos.z = inner_z - radius;
     vel.z = -vel.z * restitution;

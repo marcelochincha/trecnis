@@ -4,14 +4,14 @@
 #include <render/raytrace/embree_bvh.hpp>
 #include <vector>
 
-// Acceleration backed by Intel Embree. Builds Embree's own BVH over the SAME
-// triangles our BVH uses, so it is a drop-in alternative behind ISceneAccel.
-// Like the CPU path it keeps two scenes: static scenery (built once) and a
-// dynamic scene rebuilt each frame.
+
+
+
+
 class EmbreeAccel : public ISceneAccel {
 public:
-    // Rebuild the Embree scenes from the app geometry for this frame. The static
-    // scene is only (re)built when marked dirty.
+
+
     void sync(const bvh::BVH& static_bvh, bvh::BuildStrategy sstrat,
               const std::vector<bvh::Tri>& dyn_tris, bvh::BuildStrategy dstrat) {
         if (static_dirty_) {
@@ -51,4 +51,4 @@ private:
     std::vector<bvh::Tri> static_tris_,  dynamic_tris_;
     bool                  static_dirty_ = true;
 };
-#endif // WITH_EMBREE
+#endif

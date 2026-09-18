@@ -1,11 +1,11 @@
-// PingPong RT — entry point.
-//
-// Thin driver: owns the SDL window + present surface and the frame clock, then
-// delegates every frame to the game layer (game/sr_game.hpp). All scene
-// construction, the render dispatch and the HUD live behind that API; main.cpp
-// knows nothing about the ray tracer, the BVH or which backend is active.
-//
-// Phase 1 scene: a fixed camera looking at one static cube. No gameplay.
+
+
+
+
+
+
+
+
 
 #define SDL_MAIN_HANDLED
 
@@ -50,9 +50,9 @@ int main(int argc, char* argv[])
     Game* game = game_create(W, H);
     game_init(game);
 
-    // Optional CLI: --backend <n> pins a backend for measurement;
-    // --racket-auto / --racket-flee drive the racket toward / away from the ball
-    // for headless tests.
+
+
+
     for (int i = 1; i < argc; ++i) {
         if (i + 1 < argc && std::strcmp(argv[i], "--backend") == 0)
             game_set_backend(game, atoi(argv[i + 1]));

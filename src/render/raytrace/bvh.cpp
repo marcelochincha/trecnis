@@ -7,7 +7,7 @@
 namespace bvh {
 
 
-// ---- small AABB helpers ----------------------------------------------------
+
 
 static inline AABB aabb_empty() {
     return AABB{ vec3( 1e30f,  1e30f,  1e30f),
@@ -23,15 +23,15 @@ static inline AABB aabb_union(const AABB& a, const AABB& b) {
     return AABB{ minimum(a.min, b.min), maximum(a.max, b.max) };
 }
 
-// Surface area of the box (the "SA" the SAH is named after). Half of it,
-// actually — the constant factor cancels out when comparing split costs.
+
+
 static inline float aabb_area(const AABB& b) {
     vec3 d = b.max - b.min;
-    if (d.x < 0.0f) return 0.0f; // empty
+    if (d.x < 0.0f) return 0.0f;
     return d.x * d.y + d.y * d.z + d.z * d.x;
 }
 
-// AABB of a single triangle.
+
 static inline AABB tri_bounds(const Tri& t) {
     AABB b = aabb_empty();
     aabb_grow(b, t.v0);
@@ -40,11 +40,11 @@ static inline AABB tri_bounds(const Tri& t) {
     return b;
 }
 
-// ---- ray primitives --------------------------------------------------------
 
-// Branchless slab test: no per-axis branch, no std::swap — just min/max, which
-// the compiler turns into a handful of SSE minss/maxss. Does the ray hit the box
-// within [0, t_max]? Returns the entry distance in `t_near`.
+
+
+
+
 static inline bool aabb_hit(const AABB& b, const vec3& o, const vec3& inv,
                             float t_max, float& t_near) {
     float tx1 = (b.min.x - o.x) * inv.x, tx2 = (b.max.x - o.x) * inv.x;
@@ -61,7 +61,7 @@ static inline bool aabb_hit(const AABB& b, const vec3& o, const vec3& inv,
     return tmax >= tmin;
 }
 
-// Moller-Trumbore, on the compact geometry (v0 + precomputed edges e1, e2).
+
 static inline bool tri_hit(const TriISect& tr, const vec3& o, const vec3& d,
                            float& t) {
     const float EPS = 1e-8f;
@@ -79,10 +79,10 @@ static inline bool tri_hit(const TriISect& tr, const vec3& o, const vec3& d,
     return t > EPS;
 }
 
-// ---- build -----------------------------------------------------------------
 
-// 30-bit Morton (Z-order) code from a normalized [0,1] point: interleaves the
-// bits of x/y/z so that sorting by this code groups nearby points together.
+
+
+
 static inline uint32_t expand_bits_10(uint32_t v) {
     v = (v | (v << 16)) & 0x030000FFu;
     v = (v | (v <<  8)) & 0x0300F00Fu;
@@ -107,9 +107,9 @@ void BVH::build(std::vector<Tri> tris, BuildStrategy strategy) {
     for (std::size_t i = 0; i < tris_.size(); ++i)
         centroids_[i] = (tris_[i].v0 + tris_[i].v1 + tris_[i].v2) / 3.0f;
 
-    // Morton: globally sort triangles by the Z-order code of their centroid, so
-    // a plain index-median split in build_node yields a locality-ordered tree
-    // (fast to build, lower traversal quality than SAH).
+
+
+
     if (strategy_ == Morton) {
         AABB cb = aabb_empty();
         for (const auto& c : centroids_) aabb_grow(cb, c);
@@ -133,13 +133,13 @@ void BVH::build(std::vector<Tri> tris, BuildStrategy strategy) {
         centroids_  = std::move(nc);
     }
 
-    nodes_.reserve(tris_.size() * 2);   // upper bound on node count
+    nodes_.reserve(tris_.size() * 2);
     build_node(0, (int)tris_.size(), 0);
     centroids_.clear();
     centroids_.shrink_to_fit();
 
-    // build_node has finalized the triangle order; snapshot the cache-hot
-    // geometry (v0 + precomputed edges) parallel to tris_ for the leaf loop.
+
+
     tri_isect_.resize(tris_.size());
     for (std::size_t i = 0; i < tris_.size(); ++i) {
         const Tri& t = tris_[i];
@@ -147,16 +147,16 @@ void BVH::build(std::vector<Tri> tris, BuildStrategy strategy) {
     }
 }
 
-// Partition triangles [start, start+count) so that those whose centroid falls
-// in bins [0, split_bin] come first. Returns the index of the first triangle
-// on the right side. Swaps both tris_ and centroids_ to keep them aligned.
+
+
+
 int BVH::partition(int start, int count, int axis,
                    float cmin, float scale, int split_bin) {
     int i = start;
     int j = start + count - 1;
     while (i <= j) {
         int bin = (int)((centroids_[i].v[axis] - cmin) * scale);
-        if (bin > split_bin) {           // belongs on the right -> swap to end
+        if (bin > split_bin) {
             std::swap(tris_[i], tris_[j]);
             std::swap(centroids_[i], centroids_[j]);
             --j;
@@ -164,12 +164,12 @@ int BVH::partition(int start, int count, int axis,
             ++i;
         }
     }
-    return i; // first index on the right side
+    return i;
 }
 
-// Median split: reorder [start, start+count) so the first half holds the
-// triangles with the smallest centroid along `axis`, then return the midpoint.
-// Uses quickselect, swapping tris_ and centroids_ together so they stay aligned.
+
+
+
 int BVH::partition_median(int start, int count, int axis) {
     int mid = start + count / 2;
     int lo = start, hi = start + count - 1;
@@ -196,13 +196,13 @@ int BVH::build_node(int start, int count, int depth) {
     int idx = (int)nodes_.size();
     nodes_.push_back(Node{});
 
-    // Node bounds = union of all its triangles' bounds.
+
     AABB bounds = aabb_empty();
     for (int i = start; i < start + count; ++i)
         bounds = aabb_union(bounds, tri_bounds(tris_[i]));
 
-    // Leaf if small enough, or if we've hit the depth cap (keeps the tree
-    // shallow enough that the fixed-size traversal stack never overflows).
+
+
     if (count <= 2 || depth >= MAX_DEPTH) {
         nodes_[idx].bounds = bounds;
         nodes_[idx].left = -1;
@@ -211,7 +211,7 @@ int BVH::build_node(int start, int count, int depth) {
         return idx;
     }
 
-    // Centroid bounds drive the split axis & bin range.
+
     AABB cb = aabb_empty();
     for (int i = start; i < start + count; ++i)
         aabb_grow(cb, centroids_[i]);
@@ -223,15 +223,15 @@ int BVH::build_node(int start, int count, int depth) {
 
     int mid;
     if (strategy_ == Morton) {
-        // Already globally sorted by Z-order: a balanced index split preserves
-        // spatial locality (fast build, lower-quality tree than SAH).
+
+
         mid = start + count / 2;
     } else if (strategy_ == Median) {
-        // Split at the centroid median along the longest axis.
+
         mid = partition_median(start, count, axis);
     } else {
-        // --- Binned SAH ---
-        if (cext < 1e-8f) {                 // degenerate spread -> leaf
+
+        if (cext < 1e-8f) {
             nodes_[idx].bounds = bounds;
             nodes_[idx].left = -1;
             nodes_[idx].start = start;
@@ -252,8 +252,8 @@ int BVH::build_node(int start, int count, int depth) {
             bin_count[b]++;
         }
 
-        // Sweep to get, for each of the NB-1 split planes, the area*count of the
-        // left side and the right side.
+
+
         float left_area[NB - 1], right_area[NB - 1];
         int   left_cnt[NB - 1],  right_cnt[NB - 1];
 
@@ -272,7 +272,7 @@ int BVH::build_node(int start, int count, int depth) {
             right_cnt[i - 1]  = cnt;
         }
 
-        // Pick the split with the lowest SAH cost.
+
         float best_cost = 1e30f;
         int   best_split = -1;
         for (int i = 0; i < NB - 1; ++i) {
@@ -280,17 +280,17 @@ int BVH::build_node(int start, int count, int depth) {
             if (cost < best_cost) { best_cost = cost; best_split = i; }
         }
 
-        // Compare against the cost of NOT splitting (making a leaf). The 1.0f is
-        // a traversal-step constant; parent area normalizes the split cost.
+
+
         float parent_area = aabb_area(bounds);
         float split_cost  = 1.0f + best_cost / (parent_area > 0.0f ? parent_area : 1.0f);
         float leaf_cost   = (float)count;
         if (best_split < 0 || split_cost >= leaf_cost) {
-            // A handful of giant triangles (e.g. a flat floor quad) span the whole
-            // node, so every split leaves a child almost as big as the parent and
-            // the SAH judges no split worthwhile — collapsing hundreds of triangles
-            // into one fat leaf that every ray must test in full. Cap the leaf size:
-            // if it's still large, force a median split rather than accept the leaf.
+
+
+
+
+
             if (count > MAX_LEAF) {
                 mid = partition_median(start, count, axis);
                 if (mid == start || mid == start + count) mid = start + count / 2;
@@ -303,7 +303,7 @@ int BVH::build_node(int start, int count, int depth) {
             return idx;
         }
 
-        // Partition in place; fall back to a median split if binning degenerates.
+
         mid = partition(start, count, axis, cmin, scale, best_split);
         if (mid == start || mid == start + count)
             mid = start + count / 2;
@@ -313,7 +313,7 @@ do_split:
     int l = build_node(start, mid - start, depth + 1);
     int r = build_node(mid, start + count - mid, depth + 1);
 
-    // NOTE: nodes_ may have reallocated during recursion, so index by `idx`.
+
     nodes_[idx].bounds = bounds;
     nodes_[idx].left  = l;
     nodes_[idx].right = r;
@@ -321,7 +321,7 @@ do_split:
     return idx;
 }
 
-// ---- traversal -------------------------------------------------------------
+
 
 bool BVH::intersect(const vec3& origin, const vec3& dir, Hit& out) const {
     if (nodes_.empty()) return false;
@@ -330,20 +330,20 @@ bool BVH::intersect(const vec3& origin, const vec3& dir, Hit& out) const {
     float best = out.t;
     int   best_tri = -1;
 
-    // Front-to-back ordered traversal. Instead of pushing both children blindly
-    // and popping in arbitrary order, we test BOTH child boxes, descend into the
-    // NEARER one immediately and only stack the farther one. This tightens `best`
-    // as early as possible, so the farther box's slab test (and its whole
-    // subtree) is far more likely to be pruned. Big reduction in nodes/ray.
+
+
+
+
+
     int   stack[64];
-    float stack_t[64];   // entry distance of each stacked node (for far-cull)
+    float stack_t[64];
     int   sp  = 0;
     int   cur = 0;
 
     for (;;) {
         const Node& n = nodes_[cur];
 
-        if (n.left < 0) { // leaf
+        if (n.left < 0) {
             for (int i = n.start; i < n.start + n.count; ++i) {
                 float t;
                 if (tri_hit(tri_isect_[i], origin, dir, t) && t < best) {
@@ -360,15 +360,15 @@ bool BVH::intersect(const vec3& origin, const vec3& dir, Hit& out) const {
             if (h0 && h1) {
                 if (t0 > t1) { std::swap(c0, c1); std::swap(t0, t1); }
                 if (sp < 64) { stack[sp] = c1; stack_t[sp] = t1; ++sp; }
-                cur = c0;                        // visit nearer child next
+                cur = c0;
                 continue;
             }
             if (h0) { cur = c0; continue; }
             if (h1) { cur = c1; continue; }
         }
 
-        // No child to descend into: pop the nearest stacked node whose entry
-        // distance is still closer than the best hit (others are now culled).
+
+
         do {
             if (sp == 0) goto done;
             cur = stack[--sp];
@@ -396,13 +396,13 @@ bool BVH::occluded(const vec3& origin, const vec3& dir, float max_t) const {
         float t_near;
         if (!aabb_hit(n.bounds, origin, inv, max_t, t_near)) continue;
 
-        if (n.left < 0) { // leaf
+        if (n.left < 0) {
             for (int i = n.start; i < n.start + n.count; ++i) {
                 float t;
                 if (tri_hit(tri_isect_[i], origin, dir, t) && t < max_t)
-                    return true; // any hit is enough for a shadow ray
+                    return true;
             }
-        } else if (sp + 2 <= 64) { // guard: never write past the stack
+        } else if (sp + 2 <= 64) {
             stack[sp++] = n.left;
             stack[sp++] = n.right;
         }
@@ -410,7 +410,7 @@ bool BVH::occluded(const vec3& origin, const vec3& dir, float max_t) const {
     return false;
 }
 
-// ---- GPU flattening --------------------------------------------------------
+
 
 void BVH::flatten(std::vector<float>& nb, std::vector<int>& nl,
                   std::vector<float>& tf) const {
@@ -422,11 +422,11 @@ void BVH::flatten(std::vector<float>& nb, std::vector<int>& nl,
         nb[i*8+4] = n.bounds.max.x; nb[i*8+5] = n.bounds.max.y; nb[i*8+6] = n.bounds.max.z; nb[i*8+7] = 0.0f;
         nl[i*4+0] = n.left; nl[i*4+1] = n.right; nl[i*4+2] = n.start; nl[i*4+3] = n.count;
     }
-    // Layout (32 floats/tri):
-    //  [0-2]  v0          [3-5]  v1         [6-8]  v2
-    //  [9-11] face normal [12-14] albedo
-    //  [15] roughness  [16] metallic  [17] ior  [18] smooth  [19] pad
-    //  [20-22] n0  [23-25] n1  [26-28] n2  [29-31] emission
+
+
+
+
+
     tf.resize(tris_.size() * 32);
     for (std::size_t i = 0; i < tris_.size(); ++i) {
         const Tri& t = tris_[i];
@@ -448,14 +448,14 @@ void BVH::flatten(std::vector<float>& nb, std::vector<int>& nl,
     }
 }
 
-// ---- debug -----------------------------------------------------------------
+
 
 void BVH::debug_nodes(std::vector<DebugNode>& out) const {
     out.clear();
     if (nodes_.empty()) return;
     out.reserve(nodes_.size());
 
-    // Iterative DFS carrying each node's depth.
+
     struct Item { int node; int depth; };
     Item stack[128];
     int sp = 0;
@@ -473,4 +473,4 @@ void BVH::debug_nodes(std::vector<DebugNode>& out) const {
     }
 }
 
-} // namespace bvh
+}

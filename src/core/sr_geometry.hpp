@@ -9,7 +9,7 @@
 #include <iostream>
 #include <sstream>
 
-struct texture; // fwd
+struct texture;
 
 struct vertex
 {
@@ -17,8 +17,8 @@ struct vertex
     vec2 t;
 };
 
-// Axis-aligned bounding box. Lives in the renderer/geometry layer so the
-// raytracer/BVH (and anything else) can use it.
+
+
 struct AABB {
     vec3 min;
     vec3 max;
@@ -29,34 +29,34 @@ struct triangle
     uint32_t v0, v1, v2;
 };
 
-// Simple array structure with each face as a triangle (3 vertex indices)
-// In the order of faces : LEFT, RIGHT, TOP, BOTTOM, BACK, FRONT
+
+
 typedef std::array<vertex, 24> raw_skybox_mesh;
 
 struct mesh
 {
-    // Mesh data
+
     std::vector<vertex> vertices;
     std::vector<triangle> faces;
 
-    // Parallel to `vertices`: the source OBJ 'v' index each vertex came from.
-    // Only filled by the mesh OBJ loader / skinned-mesh builder. Lets external
-    // per-OBJ-vertex data (e.g. a skin binding) map onto the deduplicated
-    // vertex list by index instead of by position. Empty for non-OBJ meshes.
+
+
+
+
     std::vector<uint32_t> src_vertex;
 
-    // Optional diffuse texture (borrowed, not owned). When set, the ray tracer's
-    // dynamic path (fold_mesh) samples it via the per-vertex UVs in
-    // `vertices[].t` instead of a flat albedo. Null = untextured.
+
+
+
     const texture* tex = nullptr;
 
-    // Model transformation
+
     mutable mat4 _modelMatrix = mat4(1.0f);
     mutable bool _modelMatrixDirty = true;
     vec3 position = vec3(0.0f, 0.0f, 0.0f);
     vec3 rotation = vec3(0.0f, 0.0f, 0.0f);
     vec3 scale = vec3(1.0f, 1.0f, 1.0f);
-    bool double_sided = false; // Skip backface culling; visible from both sides
+    bool double_sided = false;
 
     void recalculateModelMatrix() const
     {
@@ -75,7 +75,7 @@ struct mesh
 
     mesh() {}
 
-    // Setters that mark dirty
+
     void setPosition(const vec3 &pos)
     {
         position = pos;
@@ -94,7 +94,7 @@ struct mesh
         _modelMatrixDirty = true;
     }
 
-    // Convenience method to update rotation by adding deltas
+
     void updateRotation(const vec3 &deltaRot)
     {
         rotation = rotation + deltaRot;
@@ -107,7 +107,7 @@ mesh load_ply_ascii(const std::string &filename);
 mesh load_ply_binary(const std::string &filename);
 
 
-// Generate simple meshes: cubes, planes, spheres, etc.
+
 void create_cube(mesh*m, float size);
 void create_plane(mesh*m, float width, float height);
 void create_sphere(mesh*m, float radius, int segments_lat, int segments_lon);

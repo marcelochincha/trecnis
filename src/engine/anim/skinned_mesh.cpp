@@ -4,10 +4,10 @@
 
 bool SkinnedMesh::load(const std::string& weights_path, const std::string& anim_path,
                        const mesh& m) {
-    if (m.src_vertex.size() != m.vertices.size()) return false; // not an OBJ
+    if (m.src_vertex.size() != m.vertices.size()) return false;
     bind = m.vertices;
 
-    // --- BINDING (weights): bones, verts, V ints -----------------------------
+
     std::ifstream wf(weights_path);
     if (!wf) return false;
     int bw = 0, V = 0;
@@ -24,7 +24,7 @@ bool SkinnedMesh::load(const std::string& weights_path, const std::string& anim_
     for (int i = 0; i < V; ++i) wf >> bone_of[i];
     if (!wf) return false;
 
-    // --- ANIMATION (anim): fps, bones, frames, F*B matrices ------------------
+
     std::ifstream af(anim_path);
     if (!af) return false;
     while (std::getline(af, line)) {
@@ -35,16 +35,16 @@ bool SkinnedMesh::load(const std::string& weights_path, const std::string& anim_
         else if (tok == "bones")  ss >> bones;
         else if (tok == "frames") { ss >> frames; break; }
     }
-    if (bones <= 0 || frames <= 0 || bones != bw) return false; // bones != binding
+    if (bones <= 0 || frames <= 0 || bones != bw) return false;
     skin.resize((std::size_t)frames * bones);
     for (auto& M : skin)
         for (int i = 0; i < 16; ++i) af >> M.m[i];
     if (!af) return false;
 
-    // The binding must cover every OBJ 'v'.
+
     uint32_t maxSrc = 0;
     for (uint32_t s : m.src_vertex) if (s > maxSrc) maxSrc = s;
-    if ((int)maxSrc >= V) return false; // OBJ 'v' count != binding verts
+    if ((int)maxSrc >= V) return false;
 
     vertexBone.resize(bind.size());
     matched = 0;
@@ -65,7 +65,7 @@ void SkinnedMesh::apply(mesh& m, float t) const {
     int   f1 = (f0 + 1 < frames) ? f0 + 1 : f0;
     float a  = ff - (float)f0;
 
-    // Per-bone interpolated matrix (bones is small; reused per vertex).
+
     std::vector<mat4> Mb((std::size_t)bones);
     const mat4* A = &skin[(std::size_t)f0 * bones];
     const mat4* B = &skin[(std::size_t)f1 * bones];
@@ -81,10 +81,10 @@ void SkinnedMesh::apply(mesh& m, float t) const {
 }
 
 void build_procedural_character(mesh& out, SkinnedMesh& skin) {
-    const int   bones      = 7;      // joints in the chain
-    const float seg        = 0.34f;  // segment length (height)
+    const int   bones      = 7;
+    const float seg        = 0.34f;
     const int   ringsPerSeg = 4;
-    const int   slices     = 14;     // vertices per ring
+    const int   slices     = 14;
     const int   rings      = bones * ringsPerSeg;
     const float rBase      = 0.30f, rTip = 0.10f;
     const float pi         = 3.14159265358979f;
@@ -94,9 +94,9 @@ void build_procedural_character(mesh& out, SkinnedMesh& skin) {
     out.src_vertex.clear();
     skin.vertexBone.clear();
 
-    // --- rest geometry (straight column along +Y) ----------------------------
+
     for (int r = 0; r <= rings; ++r) {
-        float ft = (float)r / rings;      // 0..1 up the height
+        float ft = (float)r / rings;
         float h  = ft * (bones * seg);
         float rad = rBase + (rTip - rBase) * ft;
         int bone = (int)std::lround(h / seg);
@@ -111,7 +111,7 @@ void build_procedural_character(mesh& out, SkinnedMesh& skin) {
             skin.vertexBone.push_back(bone);
         }
     }
-    // top cap (one central vertex bound to the last bone)
+
     uint32_t capIdx = (uint32_t)out.vertices.size();
     {
         vertex ve; ve.p = vec3(0.0f, bones * seg, 0.0f); ve.t = vec2(0.5f, 1.0f);
@@ -130,11 +130,11 @@ void build_procedural_character(mesh& out, SkinnedMesh& skin) {
             out.faces.push_back({ a, c, b });
             out.faces.push_back({ b, c, d });
         }
-    for (int s = 0; s < slices; ++s) // cap
+    for (int s = 0; s < slices; ++s)
         out.faces.push_back({ ring(rings, s), capIdx, ring(rings, s + 1) });
 
-    // --- bake the animation (travelling wave that bends the chain) ------------
-    const int   frames = 60;   // 2.5 s loop at 24 fps
+
+    const int   frames = 60;
     skin.bind    = out.vertices;
     skin.bones   = bones;
     skin.frames  = frames;
@@ -145,15 +145,15 @@ void build_procedural_character(mesh& out, SkinnedMesh& skin) {
     const vec3 zAxis(0.0f, 0.0f, 1.0f);
     for (int f = 0; f < frames; ++f) {
         float ph = (float)f / frames * 2.0f * pi;
-        mat4 A(1.0f);                 // accumulated animated transform
-        vec3 prevP(0.0f, 0.0f, 0.0f); // P_{b-1}
+        mat4 A(1.0f);
+        vec3 prevP(0.0f, 0.0f, 0.0f);
         for (int b = 0; b < bones; ++b) {
             vec3 P(0.0f, b * seg, 0.0f);
-            // per-joint angle: wave travelling toward the tip, base stiller
+
             float amp   = 0.22f + 0.03f * b;
             float theta = amp * std::sin(ph - b * 0.9f);
             A = A * translationMatrix(P - prevP) * rotationMatrix(theta, zAxis);
-            // S_b = A_b * inverse(bind_b) = A_b * translate(-P_b)
+
             skin.skin[(std::size_t)f * bones + b] = A * translationMatrix(vec3(0,0,0) - P);
             prevP = P;
         }

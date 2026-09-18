@@ -1,71 +1,71 @@
 #pragma once
 
 #include <math/sr_math.hpp>
-#include <core/sr_geometry.hpp> // AABB
+#include <core/sr_geometry.hpp>
 #include <vector>
 #include <cstddef>
 
-struct texture; // forward-declared; include sr_texture.hpp to use
+struct texture;
 
-// Bounding Volume Hierarchy: the ray-tracing acceleration structure. Triangles
-// are grouped into a tree of nested AABBs so a ray descends only into boxes it
-// actually hits, turning per-ray cost from O(N) into ~O(log N). Built top-down
-// with a binned Surface Area Heuristic (~12 buckets/axis) by default.
+
+
+
+
 
 namespace bvh {
 
-// A shadeable triangle: geometry the BVH needs + payload the shader needs.
+
 struct Tri {
     vec3  v0, v1, v2;
-    vec3  normal;           // face normal (used unless `smooth`)
-    vec3  albedo;           // base color [0,1]
-    float roughness = 0.5f; // [0,1] — 0=mirror, 1=fully matte
-    float metallic  = 0.0f; // [0,1] — 0=dielectric, 1=metal (no diffuse)
-    float ior       = 1.5f; // index of refraction (unused until BTDF added)
-    // Per-vertex normals for smooth (Gouraud/Phong) shading. Flat geometry
-    // leaves these zeroed + smooth=false and shades with `normal` (cheap);
-    // smooth meshes (spheres, loaded OBJ) set smooth=true so the shader
-    // interpolates n0/n1/n2 across the triangle.
+    vec3  normal;
+    vec3  albedo;
+    float roughness = 0.5f;
+    float metallic  = 0.0f;
+    float ior       = 1.5f;
+
+
+
+
     bool  smooth    = false;
     vec3  n0, n1, n2;
-    vec3  emission  = vec3(0.0f, 0.0f, 0.0f); // emissive radiance (HDR)
-    // Per-vertex UVs for texture mapping; tex==nullptr means use albedo color.
+    vec3  emission  = vec3(0.0f, 0.0f, 0.0f);
+
     vec2           uv0{}, uv1{}, uv2{};
     const texture* tex = nullptr;
 };
 
-// Geometry-only, cache-hot record used in the leaf intersection loop, parallel
-// to the Tri array. Traversal touches ONLY this (36 bytes: v0 + two precomputed
-// edges) instead of dragging the shading-fat Tri through cache on every test;
-// the full Tri is read once, after a hit, for shading.
+
+
+
+
 struct TriISect { vec3 v0, e1, e2; };
 
-// Result of the nearest-hit query.
+
 struct Hit {
-    float t   = 1e30f;   // distance along the ray to the closest hit
-    int   tri = -1;      // index of the hit triangle (use BVH::tri(idx)), -1 = miss
+    float t   = 1e30f;
+    int   tri = -1;
 };
 
-// Split heuristic used when building a tree, trading build speed against
-// traversal quality: SAH (best tree, slower build) for the static scene,
-// Morton (fastest build) for the per-frame dynamic tree, Median in between.
+
+
+
 enum BuildStrategy { SAH = 0, Median = 1, Morton = 2 };
 
 class BVH {
 public:
-    // Build the tree over `tris` (consumes/moves the vector in). Triangles are
-    // reordered internally so each leaf owns a contiguous range. `strategy`
-    // chooses the split heuristic (SAH by default — the original implementation).
+
+
+
     void build(std::vector<Tri> tris, BuildStrategy strategy = SAH);
 
     BuildStrategy strategy() const { return strategy_; }
 
-    // Nearest hit. Returns true and fills `out` if anything is hit; `out.t`
-    // can be pre-set to clamp the search distance (defaults to +inf).
+
+
     bool intersect(const vec3& origin, const vec3& dir, Hit& out) const;
 
-    // Any-hit, for shadow rays: returns true as soon as a triangle is hit
-    // closer than `max_t` (no need to find the closest one).
+
+
     bool occluded(const vec3& origin, const vec3& dir, float max_t) const;
 
     const Tri&  tri(int i)          const { return tris_[i]; }
@@ -73,61 +73,61 @@ public:
     std::size_t node_count()        const { return nodes_.size(); }
     bool        empty()             const { return nodes_.empty(); }
 
-    // --- GPU export (for OpenCL backend) ---
-    // Flatten the tree into three parallel arrays consumable by the GPU kernel.
-    // node_bounds: 8 floats/node (min.xyz + pad, max.xyz + pad as two float4).
-    // node_links:  4 ints/node  (left, right, start, count; left<0 means leaf).
-    // tris:        32 floats/tri — v0,v1,v2,normal,albedo,roughness,metallic,ior,
-    //              smooth(0/1), pad, n0,n1,n2 (per-vertex normals), pad×3.
+
+
+
+
+
+
     void flatten(std::vector<float>& node_bounds,
                  std::vector<int>&   node_links,
                  std::vector<float>& tris) const;
 
-    // --- Debug visualization ---
-    // One entry per node, with its box, its depth in the tree (root = 0) and
-    // whether it's a leaf. Lets a caller draw the hierarchy as wireframe.
+
+
+
     struct DebugNode { AABB bounds; int depth; bool leaf; };
     void debug_nodes(std::vector<DebugNode>& out) const;
 
 private:
     struct Node {
         AABB bounds;
-        int  left  = -1;   // interior: left child index; leaf: -1
-        int  right = -1;   // interior: right child index
-        int  start = 0;    // leaf: first triangle index
-        int  count = 0;    // leaf: triangle count
+        int  left  = -1;
+        int  right = -1;
+        int  start = 0;
+        int  count = 0;
     };
 
     std::vector<Tri>      tris_;
-    std::vector<TriISect> tri_isect_;   // parallel to tris_, cache-hot geometry
+    std::vector<TriISect> tri_isect_;
     std::vector<Node>     nodes_;
-    std::vector<vec3>     centroids_;    // parallel to tris_, used only during build
+    std::vector<vec3>     centroids_;
 
-    // Hard cap on tree depth. Top-down splitting can, in degenerate cases
-    // (many coincident centroids), peel off one triangle at a time and build a
-    // chain almost as deep as the triangle count. Traversal uses a fixed-size
-    // stack, so an unbounded depth would overflow it and corrupt the C stack
-    // (intermittent crashes). Capping the depth — forcing a leaf once we hit
-    // it — keeps every traversal stack within MAX_DEPTH. A slightly fat leaf
-    // just means a few extra triangle tests, which is harmless.
+
+
+
+
+
+
+
     static constexpr int MAX_DEPTH = 60;
 
-    // Largest triangle count the SAH is allowed to leave in a single leaf. The
-    // SAH normally decides leaf-vs-split on cost alone, but a few very large
-    // triangles (a flat floor quad) can fool it into collapsing hundreds of
-    // triangles into one leaf (see build_node). Past this size we force a median
-    // split instead, keeping traversal fast regardless of such geometry.
+
+
+
+
+
     static constexpr int MAX_LEAF = 8;
 
     int  build_node(int start, int count, int depth);
     int  partition(int start, int count, int axis,
                    float cmin, float scale, int split_bin);
-    // Reorder [start, start+count) so the first half holds the triangles with
-    // the smallest centroid along `axis` (median split). Swaps tris_ and
-    // centroids_ together. Returns the split index.
+
+
+
     int  partition_median(int start, int count, int axis);
 
     BuildStrategy strategy_ = SAH;
 };
 
-} // namespace bvh
+}

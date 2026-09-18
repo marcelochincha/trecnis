@@ -1,11 +1,11 @@
 #include <game/racket.hpp>
-#include <engine/assets/obj_loader.hpp>   // load_obj_tris -- the project's only mesh-import path
+#include <engine/assets/obj_loader.hpp>
 #include <algorithm>
 #include <limits>
 
-// Emit an oriented box (centre `c`, orthonormal axes `R`, half-extents `half`)
-// as 12 shaded triangles. Same corner indexing / winding as geom::add_box, with
-// the axis-aligned face normals replaced by the rotated axes.
+
+
+
 static void add_oriented_box(std::vector<bvh::Tri>& out, const vec3& c,
                              const vec3 R[3], const vec3& half,
                              const vec3& albedo, float roughness) {
@@ -20,12 +20,12 @@ static void add_oriented_box(std::vector<bvh::Tri>& out, const vec3& c,
         out.push_back({ v[a], v[b], v[cc], n, albedo, roughness });
         out.push_back({ v[a], v[cc], v[d], n, albedo, roughness });
     };
-    face(4, 5, 6, 7,  R[1]);       // +Y
-    face(3, 2, 1, 0, -R[1]);       // -Y
-    face(0, 3, 7, 4, -R[0]);       // -X
-    face(1, 5, 6, 2,  R[0]);       // +X
-    face(0, 1, 5, 4, -R[2]);       // -Z
-    face(3, 7, 6, 2,  R[2]);       // +Z (hitting face)
+    face(4, 5, 6, 7,  R[1]);
+    face(3, 2, 1, 0, -R[1]);
+    face(0, 3, 7, 4, -R[0]);
+    face(1, 5, 6, 2,  R[0]);
+    face(0, 1, 5, 4, -R[2]);
+    face(3, 7, 6, 2,  R[2]);
 }
 
 void Racket::configure(const vec3& pos, const vec3& euler, const vec3& size,
@@ -35,7 +35,7 @@ void Racket::configure(const vec3& pos, const vec3& euler, const vec3& size,
     euler_ = euler;
     size_  = size;
 
-    mat4 rot = rotationMatrix(euler_.x, euler_.y, euler_.z);   // ZYX
+    mat4 rot = rotationMatrix(euler_.x, euler_.y, euler_.z);
     obb_.axis[0]     = vec3(rot * vec3(1.0f, 0.0f, 0.0f));
     obb_.axis[1]     = vec3(rot * vec3(0.0f, 1.0f, 0.0f));
     obb_.axis[2]     = vec3(rot * vec3(0.0f, 0.0f, 1.0f));
@@ -48,7 +48,7 @@ void Racket::configure(const vec3& pos, const vec3& euler, const vec3& size,
 void Racket::step(const vec3& dir, const AABB& limits, float dt, float speed) {
     vec3  d  = dir;
     float dl = magnitude(d);
-    if (dl > 1e-4f) d = d / dl;                 // cap diagonal speed
+    if (dl > 1e-4f) d = d / dl;
 
     vec3 prev = pos_;
     pos_ = pos_ + d * (speed * dt);
@@ -58,7 +58,7 @@ void Racket::step(const vec3& dir, const AABB& limits, float dt, float speed) {
 
     vel_ = (dt > 1e-6f) ? (pos_ - prev) * (1.0f / dt) : vec3(0.0f, 0.0f, 0.0f);
     obb_.center = pos_;
-    obb_.vel    = vel_;   // the ball's contact response uses the paddle's velocity
+    obb_.vel    = vel_;
 }
 
 void Racket::recenter(const vec3& p) {
@@ -75,12 +75,12 @@ void Racket::append_local_tris(std::vector<bvh::Tri>& out) const {
 void Racket::append_local_tris_from_obj(const std::string& path, std::vector<bvh::Tri>& out) const {
     std::vector<bvh::Tri> raw;
     load_obj_tris(path.c_str(), vec3(0.0f, 0.0f, 0.0f), 1.0f, albedo_, 0.35f, raw);
-    if (raw.empty()) { append_local_tris(out); return; }   // no asset yet -- keep the primitive box
+    if (raw.empty()) { append_local_tris(out); return; }
 
-    // Auto-fit: centre the loaded model on its own bounding-box centre and
-    // uniformly rescale it so its largest dimension matches `size_`'s
-    // largest dimension -- whatever scale/units the asset was authored in,
-    // it ends up sized like the paddle it's replacing.
+
+
+
+
     vec3 mn( std::numeric_limits<float>::max(),  std::numeric_limits<float>::max(),  std::numeric_limits<float>::max());
     vec3 mx(-std::numeric_limits<float>::max(), -std::numeric_limits<float>::max(), -std::numeric_limits<float>::max());
     for (const bvh::Tri& t : raw) {
@@ -96,11 +96,11 @@ void Racket::append_local_tris_from_obj(const std::string& path, std::vector<bvh
     const float target_extent = std::max(size_.x,  std::max(size_.y,  size_.z));
     const float fit           = (model_extent > 1e-6f) ? target_extent / model_extent : 1.0f;
 
-    // Same placement rule append_local_tris' box already uses (P() in
-    // add_oriented_box): rotate an origin-centred local-space point by the
-    // configured orientation (obb_.axis). Only translate-only, uniform
-    // scale is applied before the rotation, so normals need the SAME
-    // rotation with no inverse-transpose correction.
+
+
+
+
+
     auto place = [&](const vec3& v) {
         const vec3 local = (v - center) * fit;
         return obb_.axis[0] * local.x + obb_.axis[1] * local.y + obb_.axis[2] * local.z;

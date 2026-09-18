@@ -8,7 +8,7 @@ struct texture
 {
     int width = 0;
     int height = 0;
-    uint32_t *data = nullptr; // Pointer to texture data in ARGB format
+    uint32_t *data = nullptr;
 
     texture(int w = 0, int h = 0)
         : width(w), height(h) {}

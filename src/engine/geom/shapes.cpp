@@ -52,4 +52,4 @@ void add_sphere(std::vector<bvh::Tri>& out,
     }
 }
 
-} // namespace geom
+}

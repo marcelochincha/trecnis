@@ -3,11 +3,7 @@
 #include <SDL2/SDL_mixer.h>
 #include <cstdio>
 
-/*
-    SOUND: Ultra-simple audio system using SDL_mixer.
-    - Music:   streamed background track (xm, ogg, mp3, mid)
-    - Samples: one-shot sound effects (wav)
-*/
+
 
 struct sound_engine
 {
@@ -32,7 +28,7 @@ inline bool sound_init(int freq = 22050, int channels = 1, int chunk_size = 1024
     }
     Mix_Init(MIX_INIT_OGG | MIX_INIT_MOD | MIX_INIT_MP3);
 
-    // SDL_mixer may silently open at a different rate than requested
+
     int actual_freq; Uint16 actual_format; int actual_channels;
     Mix_QuerySpec(&actual_freq, &actual_format, &actual_channels);
     printf("sound_init: requested=%d Hz  actual=%d Hz  format=0x%04X  ch=%d\n",
@@ -54,13 +50,13 @@ inline void sound_stop_music()
     Mix_HaltMusic();
 }
 
-// Software post-mix gain. SDL_mixer's native volume is capped at
-// MIX_MAX_VOLUME (128), so to go LOUDER than 1.0 we amplify the final
-// mixed buffer ourselves. Stored in a separate global so the callback can
-// read it without capturing state.
+
+
+
+
 inline float g_post_mix_gain = 1.0f;
 
-inline void sr_postmix_amplify(void * /*udata*/, Uint8 *stream, int len)
+inline void sr_postmix_amplify(void * , Uint8 *stream, int len)
 {
     float g = g_post_mix_gain;
     if (g <= 1.0f) return;
@@ -77,9 +73,9 @@ inline void sr_postmix_amplify(void * /*udata*/, Uint8 *stream, int len)
 
 inline void sound_set_music_volume(float v)
 {
-    // v in [0, 1] → native SDL_mixer volume (no distortion).
-    // v > 1.0     → native pinned at max + software post-mix amplification
-    //               (can clip; useful when the source file is too quiet).
+
+
+
     float native = (v > 1.0f) ? 1.0f : (v < 0.0f ? 0.0f : v);
     int vol = (int)(native * MIX_MAX_VOLUME);
     Mix_VolumeMusic(vol);
@@ -88,7 +84,7 @@ inline void sound_set_music_volume(float v)
     Mix_SetPostMix(g_post_mix_gain > 1.0f ? sr_postmix_amplify : nullptr, nullptr);
 }
 
-// Returns sample slot index, or -1 on failure
+
 inline int sound_load_sample(const char *path)
 {
     if (g_sound.sample_count >= 8) { printf("sound_load_sample: no free slots\n"); return -1; }
