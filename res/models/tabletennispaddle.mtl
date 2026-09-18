@@ -1,0 +1,7 @@
+# Material library generated locally
+
+newmtl __DEFAULT
+Kd 0.603827 0.603827 0.603827
+map_Kd Clean_Albedo.png
+d 1.000000
+illum 2
