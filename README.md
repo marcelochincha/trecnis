@@ -19,8 +19,10 @@ objects (SAH / Median / Morton build strategies).
 | Embree       | Intel Embree kernels over the same triangles      |
 | OpenCL GPU   | Whole-frame trace on the GPU (if a device exists) |
 
-The game fills a small `RenderScene` view each frame, so `render/` is fully
-decoupled from the game logic.
+Game logic writes a `World` (entities, lights, camera pose); `engine/scene`
+turns it into a small `RenderScene` view each frame, so `render/` is fully
+decoupled from everything above it and nothing above `engine/scene` needs to
+know an acceleration structure exists.
 
 ## Geometry & Rendering Conventions
 
@@ -57,7 +59,7 @@ orientation.
 ### Shared frame pipeline
 
 ```
-        RenderScene (per frame, filled by the game)
+   World (what exists)  --SceneRuntime-->  RenderScene (per frame)
                         |
         +---------------+-----------------+
         v                                 v
@@ -120,13 +122,21 @@ src/
   core/            framebuffer, camera, geometry, texture, text
   render/
     renderer.{hpp,cpp}  single entry point; owns every backend
-    render_scene.hpp    the per-frame view the game fills
+    render_scene.hpp    the per-frame view the app fills
     raytrace/      BVH, acceleration interfaces, CPU tracer, ray backends
     raster/        CPU forward rasterizer
   engine/
+    input.hpp      InputState: movement/look intent, no devices
+    scene/
+      world.hpp         Entity / CameraPose / World -- what game logic writes
+      scene_runtime.*   owns both BVHs; World -> RenderScene once per frame
     anim/          skinning, procedural character, camera animation
     assets/        OBJ + texture loaders
-  game/            app: scene, HUD, input
+  app/             host: SDL loop, framebuffer, input mapping, HUD, options
+                   menu, backend selection, benchmark harness
+  game/
+    demo.{hpp,cpp} the placeholder scene: floor, orbiting light, skinned
+                   character, free camera. Reads InputState, writes World.
   math/ io/ sound/
   main.cpp
 ```
