@@ -5,6 +5,9 @@
 #include <cstring>
 
 const vec3  SUN_DIR    = normalize(vec3(-0.3f, 1.0f, -0.2f));
+// Legacy flat ambient. The CPU tracer no longer uses it -- ambient now comes from
+// the cubemap SH (see sky_irradiance.hpp). It survives only because it is fed to
+// the OpenCL kernel as -D AMB. See .claude/skills/shading-parity.
 const float AMBIENT    = 0.0f;
 const float SHADOW_EPS = 1e-4f;
 
@@ -82,6 +85,12 @@ static vec3 reflect_dir(vec3 d, vec3 n) { return d - n * (2.0f * dot(d, n)); }
 // Deterministic per-surface-point hash (no RNG state, stable across frames):
 // used to rotate the fixed GI sample set so neighbouring points don't share the
 // exact same directions (breaks banding without introducing temporal noise).
+// Hashing the raw float bits makes this maximally discontinuous, which is fine
+// but leaves it exposed: if two acceleration structures ever disagree on the hit
+// point by even 1 ULP, the rotation jumps to an unrelated angle and the same
+// scene shades differently per backend. That is prevented upstream instead --
+// bvh::ray_tri_t() gives every accel one shared definition of the hit distance,
+// so P is bit-identical whichever one found the triangle. Keep it that way.
 static uint32_t hash_pos(const vec3& p) {
     auto bits = [](float f){ uint32_t u; std::memcpy(&u, &f, 4); return u; };
     uint32_t h = bits(p.x) * 73856093u ^ bits(p.y) * 19349663u ^ bits(p.z) * 83492791u;
@@ -125,17 +134,26 @@ vec3 trace_ray(const ray& r, const RenderScene& scene, int depth) {
     }
 
     // ---- Direct lighting (deterministic, hard shadows) ---------------------
-    // Ambient fill + an optional directional sun, then every area light treated
-    // as a point light at its centroid. No random sampling, so every shadow is
-    // hard and the image is noise-free — classic ray tracing, not path tracing.
-    float mono = AMBIENT;   // grey ambient + sun term
+    // Ambient first: the cosine-convolved cubemap when one is loaded, a flat
+    // colour when it isn't. This is a vec3, so a sunset sky tints the shadows by
+    // itself instead of greying them uniformly -- and a surface facing away from
+    // every light is no longer pure black.
+    vec3 light_color = scene.ambient_fallback;
+    if (scene.skybox_enabled && scene.sky_irr && scene.sky_irr->valid)
+        light_color = scene.sky_irr->eval(N);
+    light_color = light_color * scene.ambient_strength;
+
+    // Then the sun, and every area light treated as a point light at its
+    // centroid. No random sampling, so every shadow is hard and the image is
+    // noise-free -- classic ray tracing, not path tracing.
     if (scene.sun_enabled) {
         ray shadow(P + N_geom * SHADOW_EPS, SUN_DIR);
-        if (!scene.accel->occluded(shadow.origin, shadow.direction, 1e30f))
-            mono += std::max(0.0f, dot(N, SUN_DIR)) * (1.0f - AMBIENT);
+        if (!scene.accel->occluded(shadow.origin, shadow.direction, 1e30f)) {
+            float s = std::max(0.0f, dot(N, SUN_DIR));
+            light_color = light_color + vec3(s, s, s);
+        }
     }
 
-    vec3 light_color(mono, mono, mono);
     if (scene.emissive) for (const bvh::Tri& lt : *scene.emissive) {
         vec3  lp    = (lt.v0 + lt.v1 + lt.v2) * (1.0f / 3.0f);  // centroid
         vec3  ldir  = lp - P;
@@ -204,14 +222,23 @@ vec3 trace_ray(const ray& r, const RenderScene& scene, int depth) {
                         * (k_d * scene.gi_strength);
     }
 
+    // Schlick Fresnel, evaluated per channel. For a metal F0 IS the tint --
+    // copper reddens whatever it reflects -- so the colour lives in F0 and must
+    // NOT be multiplied in a second time as a separate tint, which double-counts
+    // the reflectance and turns every metal into a dull, dark mirror. A
+    // dielectric reflects a colourless 4% head-on.
     float cosV = std::max(0.0f, dot(N, -r.direction));
-    float F0   = tr.metallic > 0.5f
-                 ? (albedo.x + albedo.y + albedo.z) / 3.0f
-                 : 0.04f;
-    float fres = F0 + (1.0f - F0) * std::pow(1.0f - cosV, 5.0f);
-    float spec = fres * (1.0f - tr.roughness);
+    vec3  F0   = tr.metallic > 0.5f ? albedo : vec3(0.04f, 0.04f, 0.04f);
+    float f5   = std::pow(1.0f - cosV, 5.0f);
+    float ks   = 1.0f - tr.roughness;          // roughness only dims the lobe
+    vec3  spec((F0.x + (1.0f - F0.x) * f5) * ks,
+               (F0.y + (1.0f - F0.y) * f5) * ks,
+               (F0.z + (1.0f - F0.z) * f5) * ks);
 
-    if (depth >= scene.max_bounces || spec <= 0.01f || !scene.reflections) return local;
+    // The brightest channel decides whether the ray is worth tracing at all.
+    float spec_max = std::max(spec.x, std::max(spec.y, spec.z));
+    if (depth >= scene.max_bounces || spec_max <= 0.01f || !scene.reflections)
+        return local;
 
     vec3 R = reflect_dir(r.direction, N);
     float RdotG = dot(R, N_geom);
@@ -221,8 +248,10 @@ vec3 trace_ray(const ray& r, const RenderScene& scene, int depth) {
     }
     vec3 refl = trace_ray(ray(P + N_geom * SHADOW_EPS, R), scene, depth + 1);
 
-    vec3 tint = tr.metallic > 0.5f ? albedo : vec3(1.0f, 1.0f, 1.0f);
-    return local * (1.0f - spec) + vec3(refl.x * spec * tint.x,
-                                        refl.y * spec * tint.y,
-                                        refl.z * spec * tint.z);
+    // Energy split, per channel: what leaves as a specular reflection cannot
+    // also leave as diffuse. For a metal k_d already zeroed `local`, so this
+    // reduces to the reflection alone.
+    return vec3(local.x * (1.0f - spec.x) + refl.x * spec.x,
+                local.y * (1.0f - spec.y) + refl.y * spec.y,
+                local.z * (1.0f - spec.z) + refl.z * spec.z);
 }

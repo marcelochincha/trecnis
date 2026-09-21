@@ -19,7 +19,8 @@ struct Tri {
     vec3  v0, v1, v2;
     vec3  normal;           // face normal (used unless `smooth`)
     vec3  albedo;           // base color [0,1]
-    float roughness = 0.5f; // [0,1] — 0=mirror, 1=fully matte
+    float roughness = 0.5f; // [0,1] — sharpness of the specular lobe, NOT its strength.
+                            // Strength is Fresnel: `metallic` picks F0 (0.04 vs albedo).
     float metallic  = 0.0f; // [0,1] — 0=dielectric, 1=metal (no diffuse)
     float ior       = 1.5f; // index of refraction (unused until BTDF added)
     // Per-vertex normals for smooth (Gouraud/Phong) shading. Flat geometry
@@ -39,6 +40,37 @@ struct Tri {
 // edges) instead of dragging the shading-fat Tri through cache on every test;
 // the full Tri is read once, after a hit, for shading.
 struct TriISect { vec3 v0, e1, e2; };
+
+// Ray-triangle distance, Moller-Trumbore, from a full Tri.
+//
+// This exists so that "how far along the ray is the hit" has exactly ONE
+// implementation across every acceleration structure. Embree finds hits with its
+// own SIMD arithmetic in a different operation order, so its `t` lands ~1 ULP
+// away from ours -- both correct, but P = origin + dir*t then differs in the last
+// bits, and a GI ray fired from that P at a grazing angle can hit something else.
+// An accel is supposed to answer *which triangle*, not to influence the shading,
+// so the Embree path re-derives `t` through here once it knows the triangle.
+//
+// Must stay arithmetically identical to tri_hit() in bvh.cpp (same expressions,
+// same order) -- that one runs on the cache-hot TriISect in the traversal inner
+// loop, which is why the duplication is deliberate. TriISect stores exactly
+// {v0, v1-v0, v2-v0}, so the two see bit-identical inputs.
+inline bool ray_tri_t(const Tri& tr, const vec3& o, const vec3& d, float& t) {
+    const float EPS = 1e-8f;
+    vec3  e1 = tr.v1 - tr.v0, e2 = tr.v2 - tr.v0;
+    vec3  h  = cross(d, e2);
+    float a  = dot(e1, h);
+    if (std::fabs(a) < EPS) return false;
+    float f  = 1.0f / a;
+    vec3  s  = o - tr.v0;
+    float u  = f * dot(s, h);
+    if (u < 0.0f || u > 1.0f) return false;
+    vec3  q  = cross(s, e1);
+    float v  = f * dot(d, q);
+    if (v < 0.0f || u + v > 1.0f) return false;
+    t = f * dot(e2, q);
+    return t > EPS;
+}
 
 // Result of the nearest-hit query.
 struct Hit {

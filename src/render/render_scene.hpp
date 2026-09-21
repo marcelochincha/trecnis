@@ -7,6 +7,7 @@
 #include <core/sr_camera.hpp>         // camera
 #include <core/sr_texture.hpp>        // texture
 #include <core/sr_geometry.hpp>       // mesh
+#include <render/sky_irradiance.hpp> // SkyIrradiance (ambient from the cubemap)
 
 // A dynamic omni (point) light: no geometry, so it can move freely each frame.
 // Shaded deterministically like the area lights — one hard shadow ray and an
@@ -28,9 +29,9 @@ struct RasterItem {
 };
 
 // A per-frame, read-only view of everything a render backend needs to draw a
-// frame. The game app fills one of these each frame; the render/ subsystem
-// consumes it and has NO dependency on the Game type. This is the seam that
-// keeps rendering decoupled from game logic.
+// frame. The app fills one of these each frame; the render/ subsystem
+// consumes it and has NO dependency on the App type. This is the seam that
+// keeps rendering decoupled from the app and (later) game logic.
 struct RenderScene {
     const camera* cam = nullptr;
     int width  = 0;
@@ -63,6 +64,14 @@ struct RenderScene {
     const std::vector<PointLight>* point_lights = nullptr;  // dynamic omni lights
     const std::array<texture, 6>* skybox  = nullptr;
     bool skybox_enabled = true;
+
+    // Ambient. With a cubemap loaded, its order-2 SH projection lights the scene,
+    // so the sky's colour reaches surfaces the sun and lights never touch. With
+    // no cubemap (or the sky switched off) `ambient_fallback` stands in as a flat
+    // term. Either way it is a vec3, never a grey scalar.
+    const SkyIrradiance* sky_irr = nullptr;
+    vec3  ambient_fallback = vec3(0.03f, 0.035f, 0.05f);
+    float ambient_strength = 1.0f;
 
     // Solid background used when the skybox is off: the colour a ray returns on
     // a miss, and the raster/framebuffer clear colour. Keeps every backend's

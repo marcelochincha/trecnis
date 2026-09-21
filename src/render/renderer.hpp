@@ -29,7 +29,7 @@ struct IRenderBackend {
 
 // The single render entry point. Owns the shared CPU worker pool and every
 // concrete backend (raster + ray tracers), and holds the runtime selection. The
-// game app builds a RenderScene each frame and calls render(); nothing backend-
+// app builds a RenderScene each frame and calls render(); nothing backend-
 // or mode-specific leaks out.
 class Renderer {
 public:

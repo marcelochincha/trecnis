@@ -25,6 +25,7 @@ void CpuTracer::stop() {
 }
 
 void CpuTracer::dispatch() {
+    next_row_.store(0, std::memory_order_relaxed);   // publish before releasing
     for (int i = 0; i < num_workers_; ++i) SDL_SemPost(start_[i]);
     for (int i = 0; i < num_workers_; ++i) SDL_SemWait(done_);
 }
@@ -40,21 +41,27 @@ int CpuTracer::worker_entry(void* arg) {
     while (true) {
         SDL_SemWait(a->self->start_[a->id]);
         if (!a->self->running_) break;
-        a->self->run_stripe(a->id);
+        a->self->run_worker();
         SDL_SemPost(a->self->done_);
     }
     return 0;
 }
 
-void CpuTracer::run_stripe(int id) {
-    int h       = job_fb_->height;
-    int stripe  = h / num_workers_;
-    int y0      = stripe * id;
-    int y1      = (id == num_workers_ - 1) ? h : stripe * (id + 1);
-    trace_stripe(y0, y1);
+// Pull bands of scanlines off the shared counter until the frame is consumed.
+// Cost per row varies hugely across the image -- background rows miss into a
+// flat colour, rows covering the character trace a reflection ray per pixel --
+// so a static split makes every worker wait on the slowest one. Grabbing work
+// on demand keeps all of them busy right to the end of the frame.
+void CpuTracer::run_worker() {
+    const int h = job_fb_->height;
+    for (;;) {
+        int y0 = next_row_.fetch_add(ROWS_PER_CHUNK, std::memory_order_relaxed);
+        if (y0 >= h) return;
+        trace_rows(y0, std::min(y0 + ROWS_PER_CHUNK, h));
+    }
 }
 
-void CpuTracer::trace_stripe(int y0, int y1) {
+void CpuTracer::trace_rows(int y0, int y1) {
     const RenderScene& s = *job_scene_;
     framebuffer&       fb = *job_fb_;
     int w = fb.width, h = fb.height;

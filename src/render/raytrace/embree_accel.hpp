@@ -38,6 +38,17 @@ public:
         else if (hs && ps < static_tris_.size())
             { out.t = ts; out.tri = &static_tris_[ps]; }
         else return false;
+
+        // Let Embree pick the triangle, but take the distance from our own
+        // Moller-Trumbore. Embree's SIMD arithmetic runs the same maths in a
+        // different order, so its t is ~1 ULP from ours; shading derives
+        // P = origin + dir*t from it and fires GI rays out of that P at grazing
+        // angles, where one ULP is enough to hit different geometry. Re-deriving
+        // t here means both backends shade from a bit-identical P whenever they
+        // agree on the triangle, which is the whole point of ISceneAccel: it
+        // answers *what* was hit, it does not get a vote on the colour.
+        float t_own;
+        if (bvh::ray_tri_t(*out.tri, origin, dir, t_own)) out.t = t_own;
         return true;
     }
 
