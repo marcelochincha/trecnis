@@ -139,12 +139,42 @@ endif()
 # -ffast-math mirrors the GPU kernel's -cl-fast-relaxed-math: relaxed float
 # precision so the CPU ray tracer matches the GPU (e.g. grazing self-intersection
 # tests round the same way, avoiding mesh-aligned artifacts on pure mirrors).
-target_compile_options(${PROJECT_NAME} PRIVATE -march=native -ffast-math)
-
+#
+# Release already gets -O3 -DNDEBUG from CMake's own CMAKE_CXX_FLAGS_RELEASE;
+# it is repeated here so an explicitly-set CMAKE_BUILD_TYPE=RelWithDebInfo (-O2)
+# still compiles the tracer at -O3.
 if(MSVC)
     target_compile_options(${PROJECT_NAME} PRIVATE /W3 /utf-8)
     target_compile_definitions(${PROJECT_NAME} PRIVATE _CRT_SECURE_NO_WARNINGS)
+    target_compile_options(${PROJECT_NAME} PRIVATE
+        $<$<NOT:$<CONFIG:Debug>>:/O2 /fp:fast /arch:AVX2 /Oi /Ot>)
+else()
+    target_compile_options(${PROJECT_NAME} PRIVATE -march=native -ffast-math)
+    target_compile_options(${PROJECT_NAME} PRIVATE
+        $<$<NOT:$<CONFIG:Debug>>:-O3 -funroll-loops -fno-math-errno>)
 endif()
+
+# Link-time optimization: the shading core (sr_raytrace.cpp) and the traversal
+# (bvh.cpp) live in different translation units and talk through the virtual
+# ISceneAccel, so without LTO the compiler can neither inline nor devirtualize
+# the two hottest calls per ray.
+#
+# OFF by default: on this MinGW toolchain GCC's default partitioned LTO shells
+# out to `make` for the ltrans jobs and that sub-make fails ("cannot find the
+# path specified"), leaving ltrans objects unbuilt while the link still reports
+# success. -flto-partition=none does the whole LTO in one process and avoids
+# that path entirely, so that is what we pass instead of CMake's
+# INTERPROCEDURAL_OPTIMIZATION (which has no way to set the partition mode).
+# Enable with -DWITH_LTO=ON, and check the build log is clean before trusting it.
+option(WITH_LTO "Enable link-time optimization for optimized builds" OFF)
+if(WITH_LTO AND NOT MSVC)
+    message(STATUS "LTO enabled (-flto -flto-partition=none)")
+    target_compile_options(${PROJECT_NAME} PRIVATE
+        $<$<NOT:$<CONFIG:Debug>>:-flto -flto-partition=none -ffat-lto-objects>)
+    target_link_options(${PROJECT_NAME} PRIVATE
+        $<$<NOT:$<CONFIG:Debug>>:-flto -flto-partition=none>)
+endif()
+
 
 # ---- Where the binary lands -------------------------------------------------
 set_target_properties(${PROJECT_NAME} PROPERTIES
