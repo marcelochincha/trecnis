@@ -1,8 +1,14 @@
-#include <game/sr_hud.hpp>
-#include <game/sr_game.hpp>
+#include <app/app_hud.hpp>
+#include <app/app.hpp>
+#include <render/raster/sr_raster.hpp>   // draw_gizmo_line
 #include <render/raytrace/sr_raytrace.hpp>
+#include <core/sr_text.hpp>
 #include <algorithm>
 #include <cstdio>
+
+const char* strategy_name(bvh::BuildStrategy s) {
+    return s == bvh::SAH ? "SAH" : s == bvh::Median ? "Median" : "Morton";
+}
 
 double tick_ms(uint64_t& since) {
     uint64_t now = SDL_GetPerformanceCounter();
@@ -24,7 +30,7 @@ static void draw_aabb_wire(framebuffer& fb, const camera& cam, const AABB& b, ui
     for (auto& ed : edges) draw_gizmo_line(fb, cam, c[ed[0]], c[ed[1]], color);
 }
 
-void draw_bvh_debug(Game* e) {
+void draw_bvh_debug(App* e) {
     static std::vector<bvh::BVH::DebugNode> nodes;
     static const uint32_t palette[] = {
         0xFFFF4040,0xFFFFA040,0xFFFFFF40,0xFF40FF40,
@@ -40,29 +46,29 @@ void draw_bvh_debug(Game* e) {
         for (const auto& n : nodes) {
             if (n.depth > max_depth) continue;
             uint32_t col = palette[n.depth % (sizeof(palette)/sizeof(palette[0]))];
-            draw_aabb_wire(e->fb, e->cam, n.bounds, col);
+            draw_aabb_wire(e->fb, e->scene.cam(), n.bounds, col);
         }
     };
-    draw_bvh(e->static_bvh);
-    draw_bvh(e->dynamic_bvh);
+    draw_bvh(e->scene.static_bvh());
+    draw_bvh(e->scene.dynamic_bvh());
 }
 
-void draw_normals_debug(Game* e) {
-    const vec3  cam_pos   = e->cam._position;
+void draw_normals_debug(App* e) {
+    const vec3  cam_pos   = e->scene.cam()._position;
     const float scale     = 0.3f;
     const float threshold = 0.5f;
 
     auto draw_vn = [&](const vec3& pos, const vec3& n) {
         if (dot(n, normalize(pos - cam_pos)) >= threshold) return;
-        draw_gizmo_line(e->fb, e->cam, pos, pos + n * scale, 0xFF00FF88);
+        draw_gizmo_line(e->fb, e->scene.cam(), pos, pos + n * scale, 0xFF00FF88);
     };
     auto draw_tri_vn = [&](const bvh::Tri& t) {
         if (t.smooth) { draw_vn(t.v0,t.n0); draw_vn(t.v1,t.n1); draw_vn(t.v2,t.n2); }
         else          { draw_vn(t.v0,t.normal); draw_vn(t.v1,t.normal); draw_vn(t.v2,t.normal); }
     };
-    for (const auto& t : e->rt_tris) draw_tri_vn(t);
-    for (std::size_t i = 0; i < e->static_bvh.triangle_count(); ++i)
-        draw_tri_vn(e->static_bvh.tri((int)i));
+    for (const auto& t : e->scene.dynamic_tris()) draw_tri_vn(t);
+    for (std::size_t i = 0; i < e->scene.static_bvh().triangle_count(); ++i)
+        draw_tri_vn(e->scene.static_bvh().tri((int)i));
 }
 
 const int MENU_ITEMS = 7;
@@ -75,38 +81,37 @@ static const char* menu_label(int i) {
     return L[i];
 }
 
-static const char* menu_value(const Game* e, int i) {
+static const char* menu_value(const App* e, int i) {
     switch (i) {
         case 0: return e->renderer.current_name();
-        case 1: return e->use_bvh       ? "BVH"        : "Brute force";
+        case 1: return e->opts.use_bvh       ? "BVH"        : "Brute force";
         case 2: return e->show_bvh      ? "On"         : "Off";
-        case 3: return e->reflections   ? "On"         : "Off";
-        case 4: { static char b[8]; snprintf(b,sizeof(b),"%d",e->max_bounces); return b; }
-        case 5: return e->build_strategy==bvh::SAH    ? "SAH"
-                     : e->build_strategy==bvh::Median ? "Median" : "Morton";
-        default: return e->dynamic_build_strategy==bvh::SAH    ? "SAH"
-                      : e->dynamic_build_strategy==bvh::Median ? "Median" : "Morton";
+        case 3: return e->opts.reflections   ? "On"         : "Off";
+        case 4: { static char b[8]; snprintf(b,sizeof(b),"%d",e->opts.max_bounces); return b; }
+        case 5: return strategy_name(e->scene.static_strategy());
+        default: return strategy_name(e->opts.dynamic_strategy);
     }
 }
 
-void menu_apply(Game* e, int dir) {
+void menu_apply(App* e, int dir) {
     switch (e->menu_cursor) {
         case 0: e->renderer.cycle(dir); break;
-        case 1: e->use_bvh       = !e->use_bvh;       break;
+        case 1: e->opts.use_bvh       = !e->opts.use_bvh;       break;
         case 2: e->show_bvh      = !e->show_bvh;      break;
-        case 3: e->reflections   = !e->reflections;   break;
-        case 4: e->max_bounces = 1+((e->max_bounces-1+(dir<0?2:1))%3); break;
+        case 3: e->opts.reflections   = !e->opts.reflections;   break;
+        case 4: e->opts.max_bounces = 1+((e->opts.max_bounces-1+(dir<0?2:1))%3); break;
         case 5: {
-            int s = (int)e->build_strategy;
-            s = (s+(dir<0?2:1))%3;
-            e->build_strategy = (bvh::BuildStrategy)s;
-            game_rebuild_static(e);
+            // Changing the strategy only rebuilds the tree: the runtime keeps
+            // the authored scenery, so the scene is not re-created.
+            int s = ((int)e->scene.static_strategy() + (dir < 0 ? 2 : 1)) % 3;
+            e->scene.set_static_strategy((bvh::BuildStrategy)s);
+            e->scene.commit_static();
             break;
         }
         case 6: {
-            int s = (int)e->dynamic_build_strategy;
+            int s = (int)e->opts.dynamic_strategy;
             s = (s+(dir<0?2:1))%3;
-            e->dynamic_build_strategy = (bvh::BuildStrategy)s;
+            e->opts.dynamic_strategy = (bvh::BuildStrategy)s;
             break;
         }
     }
@@ -124,7 +129,7 @@ static void fill_rect_alpha(framebuffer& fb, int x0, int y0, int x1, int y1, uin
         }
 }
 
-void draw_menu(Game* e) {
+void draw_menu(App* e) {
     const int lh=18, pad=14, w=312;
     const int h = pad+24+pad+lh*MENU_ITEMS+pad+18;
     const int x = e->fb.width-w-12, y0=18;
