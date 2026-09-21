@@ -5,10 +5,10 @@
 #include <iostream>
 
 #ifndef W_WIDTH
-#define W_WIDTH 480
+#define W_WIDTH 320
 #endif
 #ifndef W_HEIGHT
-#define W_HEIGHT 360
+#define W_HEIGHT 220
 #endif
 #define TARGET_FPS 60.0f
 #define AUDIO_RATE 8192 * 2
@@ -22,6 +22,9 @@ struct config
     int audio_rate;
     bool debug_mode;
     int  num_workers; // CPU render threads; -1 = all hardware threads
+    int  bench_frames; // >0: run the offline benchmark for N frames/config, then exit
+    const char* dump_dir; // non-null: dump one frame per backend into this dir, then exit
+    int  gi_override;  // -1 = leave RenderOpts alone; 0/1 = force GI off/on at startup
 
     config()
         : window_width(W_WIDTH),
@@ -29,7 +32,10 @@ struct config
           target_fps(TARGET_FPS),
           audio_rate(AUDIO_RATE),
           debug_mode(DEBUG),
-          num_workers(-1)
+          num_workers(-1),
+          bench_frames(0),
+          dump_dir(nullptr),
+          gi_override(-1)
     {
     }
 };
@@ -42,6 +48,10 @@ inline void print_help()
     printf("  --fps <value>           Target FPS (default: 60.0)\n");
     printf("  --audio-rate <hz>       Audio sample rate (default: %d)\n", AUDIO_RATE);
     printf("  --threads <n>           CPU render threads (-1 = all cores)\n");
+    printf("  --bench <frames>        Offline benchmark: N frames per config, then exit\n");
+    printf("  --dump <dir>            Render one frame per backend into <dir>, report\n");
+    printf("                          hashes + pixel diffs vs the CPU tracer, then exit\n");
+    printf("  --gi <0|1>              Force indirect lighting off/on at startup\n");
     printf("  --debug                 Enable debug mode\n");
     printf("  --help                  Show this help\n");
     printf("\nExample: bvh_raytracer.exe --width 1280 --height 720 --fps 60\n");
@@ -72,6 +82,20 @@ inline config parse_args(int argc, char* argv[])
         else if (strcmp(argv[i], "--threads") == 0 && i + 1 < argc)
         {
             cfg.num_workers = atoi(argv[++i]);
+        }
+        else if (strcmp(argv[i], "--bench") == 0 && i + 1 < argc)
+        {
+            cfg.bench_frames = atoi(argv[++i]);
+        }
+        else if (strcmp(argv[i], "--dump") == 0 && i + 1 < argc)
+        {
+            cfg.dump_dir = argv[++i];   // argv outlives the program, so borrowing is safe
+        }
+        else if (strcmp(argv[i], "--gi") == 0 && i + 1 < argc)
+        {
+            // Headless override for the menu toggle: lets --dump isolate how much
+            // of a backend difference comes from the indirect-lighting pass.
+            cfg.gi_override = atoi(argv[++i]) ? 1 : 0;
         }
         else if (strcmp(argv[i], "--debug") == 0)
         {

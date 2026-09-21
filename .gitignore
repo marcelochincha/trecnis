@@ -38,3 +38,5 @@
 # Demo capture intermediates (the .mp4 is kept)
 docs/demo_*.bmp
 tools/
+# Frame dumps ([F12] and --dump)
+/dumps/
