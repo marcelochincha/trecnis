@@ -3,7 +3,7 @@
 #include <array>
 #include <vector>
 
-#include <engine/scene/world.hpp>
+#include <subsystems/scene/world.hpp>
 #include <render/render_scene.hpp>
 #include <render/raytrace/bvh.hpp>
 #include <core/sr_camera.hpp>

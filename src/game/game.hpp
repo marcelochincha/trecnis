@@ -1,7 +1,7 @@
 #pragma once
 
-#include <engine/scene/world.hpp>
-#include <engine/input.hpp>
+#include <subsystems/scene/world.hpp>
+#include <subsystems/input.hpp>
 
 class SceneRuntime;
 struct Game;

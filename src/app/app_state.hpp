@@ -5,9 +5,9 @@
 
 #include <SDL2/SDL.h>
 #include <core/sr_framebuffer.hpp>
-#include <engine/scene/scene_runtime.hpp>
-#include <engine/scene/world.hpp>
-#include <engine/input.hpp>
+#include <subsystems/scene/scene_runtime.hpp>
+#include <subsystems/scene/world.hpp>
+#include <subsystems/input.hpp>
 #include <render/renderer.hpp>
 
 struct Game;

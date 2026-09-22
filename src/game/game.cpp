@@ -1,7 +1,7 @@
 #include <game/game.hpp>
 
-#include <engine/scene/scene_runtime.hpp>
-#include <engine/anim/skinned_mesh.hpp>
+#include <subsystems/scene/scene_runtime.hpp>
+#include <subsystems/anim/skinned_mesh.hpp>
 #include <core/sr_profiler.hpp>
 
 #include <algorithm>
