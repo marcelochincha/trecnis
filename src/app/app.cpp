@@ -8,7 +8,6 @@
 #include <render/raytrace/sr_ocl.hpp>
 #include <core/sr_profiler.hpp>
 #include <core/sr_dump.hpp>
-#include <core/sr_texture.hpp>
 #include <core/sr_text.hpp>
 #include <sound/sr_sound.hpp>
 #include <sr_config.hpp>
@@ -21,6 +20,17 @@ App* app_create(int width, int height) {
     return new App(width, height);
 }
 
+// Ordered setup — each step depends on state the previous one left behind:
+//   1. attach/init_camera     give the scene a renderer and a camera to build for.
+//   2. game_create/init       game/ authors ALL scene content here: skybox,
+//                              static geometry (scene.add_static*/commit_static()),
+//                              ambient SH (scene.commit_sky()). This is the ONLY
+//                              place app/ reaches into "what's in the scene",
+//                              and only to hand the SceneRuntime pointer to
+//                              game/ -- app/ itself never picks an asset path.
+//   3. renderer.init          resolve worker count, build backend state.
+//   4. upload_static          must run AFTER game_init committed the static
+//                              BVH, or the renderer uploads an empty scene.
 void app_init(App* e) {
     SDL_SetRelativeMouseMode(SDL_TRUE);
 
@@ -29,15 +39,6 @@ void app_init(App* e) {
 
     e->scene.attach(e->renderer);
     e->scene.init_camera(float(e->fb.width) / float(e->fb.height), 0.01f, 1000.0f);
-
-    std::array<texture, 6>& sky = e->scene.skybox();
-    load_png_texture("res/textures/skybox3/null_plainsky512_rt.png", sky[0]);
-    load_png_texture("res/textures/skybox3/null_plainsky512_bk.png", sky[1]);
-    load_png_texture("res/textures/skybox3/null_plainsky512_ft.png", sky[2]);
-    load_png_texture("res/textures/skybox3/null_plainsky512_lf.png", sky[3]);
-    load_png_texture("res/textures/skybox3/null_plainsky512_up.png", sky[4]);
-    load_png_texture("res/textures/skybox3/null_plainsky512_dn.png", sky[5]);
-    e->scene.commit_sky();   // project the cubemap into the ambient SH, once
 
     // The scene authors itself into the runtime and then only ever writes the
     // World. Swap these calls for the tennis game and the host is unchanged.

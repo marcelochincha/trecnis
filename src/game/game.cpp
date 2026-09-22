@@ -3,6 +3,7 @@
 #include <subsystems/scene/scene_runtime.hpp>
 #include <subsystems/anim/skinned_mesh.hpp>
 #include <core/sr_profiler.hpp>
+#include <core/sr_texture.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -84,6 +85,19 @@ static vec3 hue_cycle(float t) {
 Game* game_create() { return new Game; }
 
 void game_init(Game* d, SceneRuntime& scene) {
+    // The skybox is scene content (which sky this scene has), not host
+    // plumbing, so it is chosen and loaded here rather than in app_init.
+    // scene.commit_sky() projects it into the ambient SH once; must run before
+    // anything reads the ambient term.
+    std::array<texture, 6>& sky = scene.skybox();
+    load_png_texture("res/textures/skybox3/null_plainsky512_rt.png", sky[0]);
+    load_png_texture("res/textures/skybox3/null_plainsky512_bk.png", sky[1]);
+    load_png_texture("res/textures/skybox3/null_plainsky512_ft.png", sky[2]);
+    load_png_texture("res/textures/skybox3/null_plainsky512_lf.png", sky[3]);
+    load_png_texture("res/textures/skybox3/null_plainsky512_up.png", sky[4]);
+    load_png_texture("res/textures/skybox3/null_plainsky512_dn.png", sky[5]);
+    scene.commit_sky();
+
     // Static scenery: one floor slab. Built once, never rebuilt per frame.
     scene.clear_static();
     scene.add_static_box(vec3(-8.0f, -0.02f, -8.0f), vec3(8.0f, 0.0f, 8.0f),
