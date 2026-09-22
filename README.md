@@ -37,9 +37,9 @@ cubemap, `render/sky_irradiance.*`), a sun, a dynamic point light, emissive
 quads as area lights, and deterministic one-bounce GI (Hammersley samples, so
 frames are reproducible).
 
-Game logic writes a `World` (entities, lights, camera pose); `engine/scene`
+Game logic writes a `World` (entities, lights, camera pose); `subsystems/scene`
 turns it into a small `RenderScene` view each frame, so `render/` is fully
-decoupled from everything above it and nothing above `engine/scene` needs to
+decoupled from everything above it and nothing above `subsystems/scene` needs to
 know an acceleration structure exists.
 
 ### Invariants worth knowing
@@ -199,7 +199,8 @@ src/
     sky_irradiance.*    order-2 SH ambient from the cubemap
     raytrace/      BVH, acceleration interfaces, CPU tracer, ray backends
     raster/        CPU forward rasterizer
-  engine/
+  subsystems/      domain subsystems shared by app/ and game/: no loop of
+                   their own, no runtime -- construction and conversion only
     input.hpp      InputState: movement/look intent, no devices
     scene/
       world.hpp         Entity / CameraPose / World -- what game logic writes

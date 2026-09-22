@@ -56,30 +56,106 @@ so including it would make every dump unique. Keep the capture above the overlay
 
 ## Architecture
 
-Every layer only knows the one below it.
+Every layer only knows the one below it. `app/` is the only layer that owns a
+runtime: the SDL loop, frame timing, hotkeys. `game/` and `render/` are peer
+branches that never include each other's headers; `subsystems/` is a shared
+library of domain helpers (scene fold, assets, anim, input) that both of them
+call into — it owns no loop and is not an "engine" in the runtime sense.
 
+Two different questions need two different diagrams: who depends on whom
+(static, no cycles) and what actually gets called each frame (temporal, calls
+return to their caller — a plain `flowchart` renders that return as a
+backward-looking arrow, which is what looked wrong; a `sequenceDiagram` is
+built for call/return and doesn't have that problem).
+
+**Static dependency** — every arrow means "includes headers from", one
+direction, no cycles (see the layer table below for the full "must never know
+about" rules):
+
+```mermaid
+flowchart TB
+    app["app/\n(the runtime — owns the loop)"]
+    game["game/\n(business logic)"]
+    render["render/\n(pixels, 4 backends)"]
+    subsystems["subsystems/\n(scene fold, assets, anim, input — no loop)"]
+    core["core / math / io / sound\n(no dependencies upward)"]
+
+    app --> game
+    app --> subsystems
+    app --> render
+    game --> subsystems
+    render --> core
+    subsystems --> core
+    subsystems -. "seam types, Renderer::reload_scene(),\npack() color utility" .-> render
+
+    style app fill:#2b2b3a,color:#fff
+    style game fill:#3a2b2b,color:#fff
+    style render fill:#2b333a,color:#fff
+    style subsystems fill:#243b2b,color:#fff
+    style core fill:#333,color:#fff
 ```
-SDL events ──> InputState ──> game_update ──> World
-                                                │
-                            SceneRuntime::build_frame
-                                                │
-                                          RenderScene
-                                                │
-                                    Renderer::render (1 of 4 backends)
-                                                │
-                                    framebuffer ──> overlays ──> SDL present
+
+The one dotted edge is the only wrinkle in an otherwise clean layering, and
+it is wider than just the seam types:
+- `subsystems/scene/{world,scene_runtime}.hpp` include `render/render_scene.hpp`
+  (for the `RenderScene`/`PointLight` seam types) and `render/raytrace/bvh.hpp`
+  (the `BVH`/`Tri` types `SceneRuntime` builds and owns) — that part is
+  intentional, they're the seam types themselves, not backend internals.
+- `scene_runtime.cpp` also includes `render/renderer.hpp` to call
+  `Renderer::reload_scene()` when static geometry changes after startup, and
+  `render/raytrace/sr_raytrace.hpp` for `pack()`, a colour-packing helper.
+  `Renderer` itself is only ever seen as a forward-declared pointer in the
+  header (`class Renderer;` / `Renderer* renderer_`), so this dependency is
+  confined to the one `.cpp` that owns the live scene↔renderer relationship.
+
+`subsystems/` is therefore not purely "below" `render/`; keep new subsystem
+code from reaching for anything else under `render/` beyond what's listed here.
+
+**Per-frame call order** (one iteration of the loop in `main.cpp`):
+
+```mermaid
+sequenceDiagram
+    participant Main as main.cpp
+    participant App as app/ (App)
+    participant Game as game/
+    participant Scene as subsystems/ (SceneRuntime)
+    participant Render as render/ (Renderer)
+
+    Main->>App: app_update(dt)
+    App->>App: poll_input() -> InputState
+    App->>Game: game_update(input, dt, World&)
+    Game-->>App: World written (out param)
+
+    Main->>App: app_render(dt)
+    App->>Scene: build_frame(World, opts, w, h)
+    Scene-->>App: RenderScene
+    App->>Render: render(RenderScene, framebuffer)
+    Render-->>App: framebuffer filled
+    App->>App: gizmo, debug overlays, HUD
+    Main->>Main: SDL_RenderCopy + Present
 ```
+
+`game_create`/`game_init` and `scene.attach`/`init_camera` run once in
+`app_init`, before this loop starts — see the ordered-setup comment in
+[app.cpp](src/app/app.cpp).
 
 | Layer | Owns | Must never know about |
 |---|---|---|
 | [src/game/](src/game/) | scene content, simulation, camera rig | SDL, BVH, framebuffer, backends |
-| [src/engine/scene/](src/engine/scene/) | both BVHs, folded tris, skybox, World→RenderScene | SDL, pixels |
-| [src/app/](src/app/) | window, pixels, HUD, hotkeys, frame driving | what is *in* the scene |
+| [src/subsystems/scene/](src/subsystems/scene/) | both BVHs, folded tris, skybox, World→RenderScene | SDL, pixels |
+| [src/app/](src/app/) | window, pixels, HUD, hotkeys, frame driving — the only layer with a runtime loop | what is *in* the scene |
 | [src/render/](src/render/) | turning a RenderScene into pixels | the App type, game logic |
 
 The seam types are the contract: **`World`** (what exists, in gameplay terms) and
 **`RenderScene`** (a per-frame read-only view for backends). Swapping the game module
 means changing the four `game_*` calls in [app.cpp](src/app/app.cpp) and nothing else.
+
+`subsystems/` is not a game engine: it has no scheduler and owns no frame loop.
+It is a library of domain-specific building blocks (scene fold, asset loading,
+animation, input abstraction) that `app/` and `game/` both depend on, so that
+neither has to reimplement BVH construction or OBJ parsing itself. New
+subsystems (e.g. a sound player built on top of [src/sound/](src/sound/)'s raw
+SDL2_mixer wrapper) belong here for the same reason.
 
 ### The four backends
 
@@ -105,10 +181,10 @@ cycled at runtime with `G` / `TAB`:
 - [src/sr_config.hpp](src/sr_config.hpp) — CLI parsing + `global_config`
 
 **Seams**
-- [src/engine/scene/world.hpp](src/engine/scene/world.hpp) — `Entity`, `CameraPose`, `World`
+- [src/subsystems/scene/world.hpp](src/subsystems/scene/world.hpp) — `Entity`, `CameraPose`, `World`
 - [src/render/render_scene.hpp](src/render/render_scene.hpp) — `RenderScene`, `PointLight`, `RasterItem`
-- [src/engine/scene/scene_runtime.hpp](src/engine/scene/scene_runtime.hpp) — `SceneRuntime`, `RenderOpts`
-- [src/engine/input.hpp](src/engine/input.hpp) — `InputState` (intent, not devices)
+- [src/subsystems/scene/scene_runtime.hpp](src/subsystems/scene/scene_runtime.hpp) — `SceneRuntime`, `RenderOpts`
+- [src/subsystems/input.hpp](src/subsystems/input.hpp) — `InputState` (intent, not devices)
 - [src/render/raytrace/accel.hpp](src/render/raytrace/accel.hpp) — `ISceneAccel`, `SceneHit`
 
 **Rendering**
@@ -120,9 +196,9 @@ cycled at runtime with `G` / `TAB`:
 - [src/render/raster/sr_raster.cpp](src/render/raster/sr_raster.cpp) — scanline rasterizer, skybox, gizmo, debug lines
 - [src/render/sky_irradiance.hpp](src/render/sky_irradiance.hpp) — order-2 SH ambient from the cubemap
 
-**Engine / core**
-- [src/engine/assets/obj_loader.cpp](src/engine/assets/obj_loader.cpp) — OBJ→`mesh` and OBJ+MTL→`bvh::Tri`
-- [src/engine/anim/](src/engine/anim/) — procedural skinned character, keyframed camera paths
+**Subsystems / core**
+- [src/subsystems/assets/obj_loader.cpp](src/subsystems/assets/obj_loader.cpp) — OBJ→`mesh` and OBJ+MTL→`bvh::Tri`
+- [src/subsystems/anim/](src/subsystems/anim/) — procedural skinned character, keyframed camera paths
 - [src/core/](src/core/) — framebuffer, camera, texture, text, geometry, profiler, `sr_dump`
 - [src/math/](src/math/) — `vec2/3/4`, `mat4`; [src/io/](src/io/) vendored stb_image; [src/sound/](src/sound/) SDL2_mixer wrapper
 
@@ -145,6 +221,15 @@ Assets: `res/mall/`, `res/cornell/`, `res/data/`.
 3. **Game logic never sees SDL, a BVH, a framebuffer or a backend.** It reads
    `InputState` and writes `World`. If a change in `game/` needs a render header,
    the design is wrong.
+   **`app/` never decides scene content, even by loading an asset directly.**
+   Which skybox, which meshes, which materials exist is `game/`'s call, made
+   inside `game_init(Game*, SceneRuntime&)` — that function is the one seam
+   where content gets authored into the scene. A hardcoded asset path
+   (`load_png_texture(...)`, `scene.add_static*`, `Entity{...}`) in `app.cpp`
+   or `app_hud.cpp` is this invariant broken, not a style nit: it happened once
+   (the skybox load was in `app_init`, moved to `game_init` in game.cpp) and
+   the fix is always the same — move the call into `game/`, keep `app/` calling
+   only `game_init`/`game_update`.
 4. **`render/` never includes the `App` type.** It consumes `RenderScene` only.
 5. **Two BVHs, on purpose:** static scenery built once (SAH), dynamic geometry
    refolded and rebuilt every frame (Morton). That is what makes skinned meshes
@@ -156,6 +241,29 @@ Assets: `res/mall/`, `res/cornell/`, `res/data/`.
    `-cl-fast-relaxed-math`) so grazing self-intersections round the same way.
 8. **`BVH::MAX_DEPTH = 60` and `MAX_LEAF = 8` are load-bearing.** Traversal uses a
    fixed-size stack; unbounded depth corrupts the C stack as an intermittent crash.
+
+### Verifying the layer boundaries
+
+Before finishing a change that touches `app/`, `game/`, `render/` or `subsystems/`,
+run these. Hits inside comments (e.g. this section's own text) are fine — a hit
+in actual code is the violation.
+
+```sh
+# app/ must not decide scene content
+grep -n '"res/\|\.png\|\.obj\|\.mtl\|add_static\|Entity(' src/app/*.cpp src/app/*.hpp
+
+# game/ must not use render internals, even if a header transitively exposes them
+grep -n 'bvh::\|BVH\b\|SDL_\|framebuffer\|IRenderBackend' src/game/*.cpp src/game/*.hpp
+
+# render/ must not reach into app/ or game/
+grep -rln '#include.*<app/\|#include.*<game/' src/render
+
+# subsystems/ must not own a loop
+grep -rn 'SDL_PollEvent\|while *( *true\|while *( *running' src/subsystems
+
+# core/ must not reach upward into any other layer
+grep -rln '#include.*<app/\|#include.*<game/\|#include.*<subsystems/\|#include.*<render/' src/core
+```
 
 ---
 
