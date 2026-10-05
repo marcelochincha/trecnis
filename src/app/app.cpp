@@ -161,8 +161,9 @@ void app_render(App* e, SDL_Texture* sdl_fb_texture, float dt) {
         if (e->hud_simple) {
             char line[192];
             snprintf(line, sizeof(line),
-                "FPS: %.0f  |  %s  |  BVH: %s  |  [H] expand",
-                1.0f/dt, backend, e->opts.use_bvh ? "On" : "Off");
+                "FPS: %.0f  |  %s  |  BVH: %s  |  %s  |  [H] expand",
+                1.0f/dt, backend, e->opts.use_bvh ? "On" : "Off",
+                game_status(e->game));
             draw_text(e->fb, 12, 12, line, 0x88000000, 0x88000000);
             draw_text(e->fb, 10, 10, line, 0xFFFFFFFF);
         } else {
@@ -180,7 +181,7 @@ void app_render(App* e, SDL_Texture* sdl_fb_texture, float dt) {
                 "  tris: %zu  nodes: %zu\n"
                 "Accel: %s   Static: %s  Dyn: %s\n"
                 "Backend: %s\n"
-                "Move: %s\n"
+                "Game: %s\n"
                 "[TAB/G] backend [B] BVH [V] vis [N] normals [L] sun\n[M] menu  [SPACE x2] walk/fly\n[H] compact\n",
                 dt*1000.0f, 1.0f/dt, prof,
                 sb.triangle_count(), sb.node_count(), e->scene.static_build_ms(),
