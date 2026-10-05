@@ -2,6 +2,7 @@
 
 #include <SDL2/SDL_mixer.h>
 #include <cstdio>
+#include <vector>
 
 /*
     SOUND: Ultra-simple audio system using SDL_mixer.
@@ -9,19 +10,15 @@
     - Samples: one-shot sound effects (wav)
 */
 
-struct sound_engine
+struct sr_sound_state
 {
     Mix_Music *music;
-    Mix_Chunk *samples[8];
-    int sample_count;
+    std::vector<Mix_Chunk *> samples;
 
-    sound_engine() : music(nullptr), sample_count(0)
-    {
-        for (int i = 0; i < 8; i++) samples[i] = nullptr;
-    }
+    sr_sound_state() : music(nullptr) {}
 };
 
-inline sound_engine g_sound;
+inline sr_sound_state g_sound;
 
 inline bool sound_init(int freq = 22050, int channels = 1, int chunk_size = 1024)
 {
@@ -41,17 +38,20 @@ inline bool sound_init(int freq = 22050, int channels = 1, int chunk_size = 1024
     return true;
 }
 
-inline void sound_play_music(const char *path, bool loop = true)
+inline void sound_play_music(const char *path, bool loop = true, int fade_in_ms = 0)
 {
     if (g_sound.music) { Mix_FreeMusic(g_sound.music); g_sound.music = nullptr; }
     g_sound.music = Mix_LoadMUS(path);
     if (!g_sound.music) { printf("sound_play_music: failed to load '%s': %s\n", path, Mix_GetError()); return; }
-    Mix_PlayMusic(g_sound.music, loop ? -1 : 1);
+    int loops = loop ? -1 : 1;
+    if (fade_in_ms > 0) Mix_FadeInMusic(g_sound.music, loops, fade_in_ms);
+    else Mix_PlayMusic(g_sound.music, loops);
 }
 
-inline void sound_stop_music()
+inline void sound_stop_music(int fade_out_ms = 0)
 {
-    Mix_HaltMusic();
+    if (fade_out_ms > 0) Mix_FadeOutMusic(fade_out_ms);
+    else Mix_HaltMusic();
 }
 
 // Software post-mix gain. SDL_mixer's native volume is capped at
@@ -91,17 +91,16 @@ inline void sound_set_music_volume(float v)
 // Returns sample slot index, or -1 on failure
 inline int sound_load_sample(const char *path)
 {
-    if (g_sound.sample_count >= 8) { printf("sound_load_sample: no free slots\n"); return -1; }
     Mix_Chunk *chunk = Mix_LoadWAV(path);
     if (!chunk) { printf("sound_load_sample: failed to load '%s': %s\n", path, Mix_GetError()); return -1; }
-    int slot = g_sound.sample_count++;
-    g_sound.samples[slot] = chunk;
+    int slot = (int)g_sound.samples.size();
+    g_sound.samples.push_back(chunk);
     return slot;
 }
 
 inline void sound_play_sample(int slot, float volume = 1.0f)
 {
-    if (slot < 0 || slot >= g_sound.sample_count || !g_sound.samples[slot]) return;
+    if (slot < 0 || slot >= (int)g_sound.samples.size() || !g_sound.samples[slot]) return;
     int vol = (int)(volume * MIX_MAX_VOLUME);
     if (vol < 0) vol = 0;
     if (vol > MIX_MAX_VOLUME) vol = MIX_MAX_VOLUME;
@@ -113,11 +112,11 @@ inline void sound_shutdown()
 {
     Mix_HaltMusic();
     if (g_sound.music) { Mix_FreeMusic(g_sound.music); g_sound.music = nullptr; }
-    for (int i = 0; i < g_sound.sample_count; i++)
+    for (Mix_Chunk *&chunk : g_sound.samples)
     {
-        if (g_sound.samples[i]) { Mix_FreeChunk(g_sound.samples[i]); g_sound.samples[i] = nullptr; }
+        if (chunk) { Mix_FreeChunk(chunk); chunk = nullptr; }
     }
-    g_sound.sample_count = 0;
+    g_sound.samples.clear();
     Mix_CloseAudio();
     Mix_Quit();
 }
