@@ -5,10 +5,10 @@
 #include <iostream>
 
 #ifndef W_WIDTH
-#define W_WIDTH 320
+#define W_WIDTH 640
 #endif
 #ifndef W_HEIGHT
-#define W_HEIGHT 220
+#define W_HEIGHT 480
 #endif
 #define TARGET_FPS 60.0f
 #define AUDIO_RATE 8192 * 2
