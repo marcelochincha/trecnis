@@ -121,10 +121,11 @@ cmake -S . -B build -G Ninja -DWITH_EMBREE=ON -DWITH_OPENCL=ON
 cmake --build build -j
 ```
 
-Options: `WITH_EMBREE` (default ON), `WITH_OPENCL` (default OFF), `WITH_LTO`
-(default OFF), `WIN32_GUI`. Both backends are optional — when disabled they
-simply drop out of the runtime toggle. Optimized configs compile at `-O3`
-(`/O2 /fp:fast /arch:AVX2` on MSVC).
+Options: `WITH_EMBREE` (default ON), `WITH_OPENCL` (default OFF), `WITH_IMGUI`
+(default ON; `M` opens the debugger), `WITH_LTO` (default OFF), `WIN32_GUI`. All
+optional backends drop out of the runtime toggle when disabled; with
+`WITH_IMGUI=OFF` the HUD and debugger disappear but the game's own UI still
+works. Optimized configs compile at `-O3` (`/O2 /fp:fast /arch:AVX2` on MSVC).
 
 `WITH_LTO` is off on purpose: on the MinGW toolchain used here, GCC's
 partitioned LTO shells out to `make`, the sub-make fails and the link still
@@ -175,17 +176,22 @@ disagreement apart from a shading one without opening the menu.
 
 | Key            | Action                                  |
 |----------------|-----------------------------------------|
-| `W A S D` + mouse | Fly / look                           |
-| `Space` ×2     | Toggle walk / fly                       |
-| Mouse wheel    | Move speed                              |
+| Mouse          | Aim the paddle (during a rally)         |
 | `G` / `Tab`    | Cycle render backend (next / previous)  |
 | `B`            | BVH ↔ brute force                       |
 | `V` / `N`      | BVH wireframe / normals overlay         |
 | `L`            | Toggle sun                              |
 | `F12`          | Dump current frame to `dumps/`          |
-| `M`            | Options menu                            |
+| `M`            | Dear ImGui debugger (open / close)      |
 | `H`            | Compact HUD                             |
-| `Esc`          | Close menu / quit                       |
+| `Backspace`    | Pause / resume the match                |
+| Arrows / `W S`, `Enter` | Navigate game menus (keyboard) |
+| `Esc`          | Close debugger, or quit                 |
+
+The game UI (title, scoreboard, point banner, pause) and the debugger are drawn
+after `SDL_RenderCopy`, at window resolution through `SDL_RenderGeometryRaw` and
+Dear ImGui respectively. Nothing UI-related is ever written into the
+framebuffer, so the frame dump stays pure backend output.
 
 ## Layout
 
@@ -201,18 +207,23 @@ src/
     raster/        CPU forward rasterizer
   subsystems/      domain subsystems shared by app/ and game/: no loop of
                    their own, no runtime -- construction and conversion only
-    input.hpp      InputState: movement/look intent, no devices
+    input.hpp      InputState (movement/look) + UiInput (menus)
     scene/
       world.hpp         Entity / CameraPose / World -- what game logic writes
       scene_runtime.*   owns both BVHs; World -> RenderScene once per frame
+    ui/            immediate-mode UI: 8x8 bitmap font atlas, draw-list builder
+                   (SDL-free; the app rasterizes it via SDL_RenderGeometryRaw)
+    debug/         DebugVars: a flat registry of tunables game/ exposes
     anim/          skinning, procedural character, camera animation
     assets/        OBJ + texture loaders
-  app/             host: SDL loop, framebuffer, input mapping, HUD, options
-                   menu, backend selection, benchmark harness
+  app/             host: SDL loop, framebuffer, input mapping, HUD, backend
+                   selection, benchmark harness
+    app_debug.*    Dear ImGui debugger (the only TU that includes imgui.h)
+    app_ui.*       submits a UiDrawList through SDL_RenderGeometryRaw
   game/
-    game.{hpp,cpp} the placeholder scene: floor, orbiting light, skinned
-                   character, spinning cube, free camera. Reads InputState,
-                   writes World. Never sees SDL, a BVH or a backend.
+    game.{hpp,cpp} table tennis: reads InputState, writes World, exposes
+                   DebugVars and builds its own UI (title/score/pause). Never
+                   sees SDL, a BVH or a backend.
   math/ io/ sound/
   main.cpp         SDL init, main loop, frame cap, --bench harness
   sr_config.hpp    CLI parsing + global_config

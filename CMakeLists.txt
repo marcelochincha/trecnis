@@ -86,6 +86,36 @@ if(WIN32)
     target_link_libraries(${PROJECT_NAME} PRIVATE mingw32 psapi)
 endif()
 
+# ---- Dear ImGui debugger (optional) -----------------------------------------
+# Vendorizado en third_party/imgui (v1.90.9, rama normal). Backends:
+# imgui_impl_sdl2 + imgui_impl_sdlrenderer2 sobre el SDL_Renderer existente, sin
+# contexto OpenGL. El código ImGui vive solo en src/app/; esto solo construye la
+# librería. `ImDrawIdx` de 32 bits para el overlay de BVH (Fase 4).
+option(WITH_IMGUI "Dear ImGui debugger [M key]" ON)
+if(WITH_IMGUI)
+    add_library(imgui STATIC
+        "${CMAKE_SOURCE_DIR}/third_party/imgui/imgui.cpp"
+        "${CMAKE_SOURCE_DIR}/third_party/imgui/imgui_draw.cpp"
+        "${CMAKE_SOURCE_DIR}/third_party/imgui/imgui_tables.cpp"
+        "${CMAKE_SOURCE_DIR}/third_party/imgui/imgui_widgets.cpp"
+        "${CMAKE_SOURCE_DIR}/third_party/imgui/imgui_demo.cpp"
+        "${CMAKE_SOURCE_DIR}/third_party/imgui/backends/imgui_impl_sdl2.cpp"
+        "${CMAKE_SOURCE_DIR}/third_party/imgui/backends/imgui_impl_sdlrenderer2.cpp")
+    target_include_directories(imgui PUBLIC
+        "${CMAKE_SOURCE_DIR}/third_party/imgui"
+        "${CMAKE_SOURCE_DIR}/third_party/imgui/backends")
+    # Los backends hacen #include <SDL.h>, no <SDL2/SDL.h>.
+    target_include_directories(imgui PRIVATE "${CMAKE_SOURCE_DIR}/third_party/SDL2")
+    target_link_libraries(imgui PUBLIC SDL2::SDL2)
+    target_compile_definitions(imgui PUBLIC ImDrawIdx=unsigned\ int)
+    if(WIN32)
+        target_link_libraries(imgui PUBLIC imm32)
+    endif()
+    target_compile_definitions(${PROJECT_NAME} PRIVATE WITH_IMGUI)
+    target_link_libraries(${PROJECT_NAME} PRIVATE imgui)
+    message(STATUS "Dear ImGui (bundled) -> WITH_IMGUI enabled [M key]")
+endif()
+
 # ---- OpenCL GPU backend (optional) ------------------------------------------
 # Windows: bundled lib/libOpenCL.a + third_party/CL/ headers.
 # macOS:   system -framework OpenCL (no lib needed).

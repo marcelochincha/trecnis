@@ -1,6 +1,7 @@
 #define SDL_MAIN_HANDLED
 
 #include <iostream>
+#include <algorithm>
 #include <array>
 #include <vector>
 #include <cstring>
@@ -15,6 +16,7 @@
 #include <sound/sr_sound.hpp>
 #include <app/app.hpp>
 #include <app/app_state.hpp>
+#include <app/app_debug.hpp>
 #include <game/game.hpp>
 #include <core/sr_profiler.hpp>
 #include <core/sr_dump.hpp>
@@ -33,8 +35,6 @@ void init_sdl()
         global_config.window_width, global_config.window_height,
         SDL_WINDOW_RESIZABLE);
     renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
-    SDL_RenderSetLogicalSize(renderer, global_config.window_width, global_config.window_height);
-    SDL_RenderSetIntegerScale(renderer, SDL_TRUE);
     sdl_fb_texture = SDL_CreateTexture(
         renderer,
         SDL_PIXELFORMAT_ARGB8888,
@@ -85,11 +85,11 @@ static void run_bench(App* g, SDL_Texture* tex, int frames)
         for (int i = 0; i < frames; ++i) {
             uint64_t a = SDL_GetPerformanceCounter();
             app_update(g, dt);
-            uint64_t b = SDL_GetPerformanceCounter();
-            app_render(g, tex, dt);
-            uint64_t d = SDL_GetPerformanceCounter();
-            upd += (double)(b - a) * 1000.0 / freq;
-            ren += (double)(d - b) * 1000.0 / freq;
+        uint64_t b = SDL_GetPerformanceCounter();
+        app_render(g, tex, dt);
+        uint64_t d = SDL_GetPerformanceCounter();
+        upd += (double)(b - a) * 1000.0 / freq;
+        ren += (double)(d - b) * 1000.0 / freq;
         }
         upd /= frames; ren /= frames;
         printf("%-26s %10.2f %10.2f %10.1f\n", c.name, upd, ren, 1000.0 / (upd + ren));
@@ -101,41 +101,41 @@ static void run_bench(App* g, SDL_Texture* tex, int frames)
 
     // ---- Full-frame breakdown ------------------------------------------------
     // The rows above stop at the renderer. The frame the user actually waits for
-    // also draws the HUD and blits/presents through SDL, so measure those two
-    // separately: HUD cost is (render with HUD) - (render without), and present
-    // is the RenderClear/RenderCopy/RenderPresent block on its own.
+    // also presents through SDL, and since Fase 2 the HUD is an ImGui overlay
+    // built inside app_present. So: render is measured on its own, and the HUD
+    // cost is (present with HUD) - (present without).
     const double f2 = (double)SDL_GetPerformanceFrequency();
-    double r_nohud = 0.0, r_hud = 0.0, pres = 0.0;
+    double r_nohud = 0.0, pres_nohud = 0.0, pres_hud = 0.0;
 
     g->show_hud = false;
     for (int i = 0; i < frames; ++i) {
         app_update(g, dt);
         uint64_t a = SDL_GetPerformanceCounter();
         app_render(g, tex, dt);
-        r_nohud += (double)(SDL_GetPerformanceCounter() - a) * 1000.0 / f2;
+        uint64_t b = SDL_GetPerformanceCounter();
+        app_present(g, renderer, tex);
+        uint64_t c2 = SDL_GetPerformanceCounter();
+        r_nohud   += (double)(b - a) * 1000.0 / f2;
+        pres_nohud += (double)(c2 - b) * 1000.0 / f2;
     }
 
     g->show_hud = true; g->hud_simple = false;
     for (int i = 0; i < frames; ++i) {
         app_update(g, dt);
-        uint64_t a = SDL_GetPerformanceCounter();
         app_render(g, tex, dt);
         uint64_t b = SDL_GetPerformanceCounter();
-        SDL_RenderClear(renderer);
-        SDL_RenderCopy(renderer, tex, NULL, NULL);
-        SDL_RenderPresent(renderer);
-        uint64_t c2 = SDL_GetPerformanceCounter();
-        r_hud += (double)(b - a) * 1000.0 / f2;
-        pres  += (double)(c2 - b) * 1000.0 / f2;
+        app_present(g, renderer, tex);
+        pres_hud += (double)(SDL_GetPerformanceCounter() - b) * 1000.0 / f2;
     }
-    r_nohud /= frames; r_hud /= frames; pres /= frames;
+    r_nohud /= frames; pres_nohud /= frames; pres_hud /= frames;
 
+    const double total_ms = r_nohud + pres_hud;
     printf("\n--- full-frame breakdown (baseline settings) ---\n");
-    printf("  render (no HUD)   %8.2f ms\n", r_nohud);
-    printf("  HUD text          %8.2f ms\n", r_hud - r_nohud);
-    printf("  SDL present       %8.2f ms\n", pres);
+    printf("  render            %8.2f ms\n", r_nohud);
+    printf("  HUD overlay       %8.2f ms\n", std::max(0.0, pres_hud - pres_nohud));
+    printf("  SDL present       %8.2f ms\n", pres_nohud);
     printf("  -> total          %8.2f ms  = %.1f fps\n",
-           r_hud + pres, 1000.0 / (r_hud + pres));
+           total_ms, 1000.0 / total_ms);
     fflush(stdout);
 
 
@@ -197,10 +197,7 @@ static void run_bench(App* g, SDL_Texture* tex, int frames)
             g_prof.begin_frame();
             app_update(g, dt);
             app_render(g, tex, dt);
-            { PROF_SCOPE(PROF_PRESENT);
-              SDL_RenderClear(renderer);
-              SDL_RenderCopy(renderer, tex, NULL, NULL);
-              SDL_RenderPresent(renderer); }
+            app_present(g, renderer, tex);
             g_prof.end_frame();
             cur = SDL_GetTicks64();
             if (cur - last < target_ms) {
@@ -334,10 +331,12 @@ int main(int argc, char *argv[])
     sound_set_music_volume(0.5f);
     App *app = app_create(global_config.window_width, global_config.window_height);
     app_init(app);
+    app_debug::init(app, window, renderer);
 
     if (global_config.dump_dir) {
         run_dump(app, sdl_fb_texture, global_config.dump_dir);
         app_shutdown(app);
+        app_debug::shutdown();
         SDL_DestroyTexture(sdl_fb_texture);
         SDL_DestroyRenderer(renderer);
         SDL_DestroyWindow(window);
@@ -348,6 +347,7 @@ int main(int argc, char *argv[])
     if (global_config.bench_frames > 0) {
         run_bench(app, sdl_fb_texture, global_config.bench_frames);
         app_shutdown(app);
+        app_debug::shutdown();
         SDL_DestroyTexture(sdl_fb_texture);
         SDL_DestroyRenderer(renderer);
         SDL_DestroyWindow(window);
@@ -404,11 +404,10 @@ int main(int argc, char *argv[])
         app_update(app, deltaTimeSeconds);
         app_render(app, sdl_fb_texture, deltaTimeSeconds);
 
-        { PROF_SCOPE(PROF_PRESENT);
-          SDL_RenderClear(renderer);
-          SDL_RenderCopy(renderer, sdl_fb_texture, NULL, NULL);
-          SDL_RenderPresent(renderer); }
+        app_present(app, renderer, sdl_fb_texture);
         g_prof.end_frame();
+
+        if (game_wants_quit(app->game)) running = false;
 
         currentTime = SDL_GetTicks64();
         if (currentTime - lastTime < target_delta_ms)
@@ -420,6 +419,7 @@ int main(int argc, char *argv[])
     }
 
     app_shutdown(app);
+    app_debug::shutdown();
     SDL_DestroyTexture(sdl_fb_texture);
     SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);

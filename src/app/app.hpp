@@ -5,8 +5,8 @@
 struct App;
 
 // =============================================================================
-// app/ — the runtime. main.cpp calls exactly these five functions, in this
-// order, and owns nothing about rendering or gameplay itself; App (app_state.hpp)
+// app/ — the runtime. main.cpp calls exactly these functions, in this order,
+// and owns nothing about rendering or gameplay itself; App (app_state.hpp)
 // holds all of it. This header is the entire contract between main.cpp and the
 // host, and the host's entire contract with game/ and core/ is these two lines:
 //
@@ -29,6 +29,8 @@ struct App;
 //   app_update   per frame: poll SDL input -> InputState -> game_update -> World.
 //   app_render   per frame: World -> RenderScene -> Renderer::render -> pixels,
 //                then debug overlays/HUD, then the SDL texture upload.
+//   app_present  per frame: clear, blit the framebuffer letterboxed, then the
+//                game UI and the ImGui debugger, then SDL_RenderPresent.
 //   app_shutdown tears down the renderer and destroys the game.
 // =============================================================================
 
@@ -38,4 +40,5 @@ void app_init(App* e);
 void app_update(App* e, float dt);
 void app_handle_events(App* e, SDL_Event& event, bool& running);
 void app_render(App* e, SDL_Texture* sdl_fb_texture, float dt);
+void app_present(App* e, SDL_Renderer* r, SDL_Texture* sdl_fb_texture);
 void app_shutdown(App* e);

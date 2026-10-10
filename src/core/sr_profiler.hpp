@@ -20,8 +20,9 @@ enum ProfSection {
     PROF_TRACE,      // active render backend (raster / CPU BVH / Embree / OpenCL)
     PROF_GIZMO,      // origin gizmo overlay
     PROF_DEBUG,      // BVH wireframe + normals overlays
-    PROF_HUD,        // HUD/menu text rasterization
     PROF_UPLOAD,     // SDL_UpdateTexture (framebuffer -> GPU texture)
+    PROF_UI,         // game UI: draw-list build + SDL_RenderGeometryRaw submit
+    PROF_IMGUI,      // Dear ImGui debugger: NewFrame + windows + RenderDrawData
     PROF_PRESENT,    // SDL_RenderClear/Copy/Present
     PROF_COUNT
 };

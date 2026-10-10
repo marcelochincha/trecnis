@@ -37,8 +37,9 @@ const char* Profiler::name(ProfSection s) {
         case PROF_TRACE:   return "trace";
         case PROF_GIZMO:   return "gizmo";
         case PROF_DEBUG:   return "dbgovl";
-        case PROF_HUD:     return "hud";
         case PROF_UPLOAD:  return "upload";
+        case PROF_UI:      return "ui";
+        case PROF_IMGUI:   return "imgui";
         case PROF_PRESENT: return "presnt";
         default:           return "?";
     }

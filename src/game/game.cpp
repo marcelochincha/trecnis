@@ -3,6 +3,7 @@
 
 #include <subsystems/scene/scene_runtime.hpp>
 #include <subsystems/anim/skinned_mesh.hpp>
+#include <subsystems/ui/ui_context.hpp>
 #include <core/sr_profiler.hpp>
 #include <core/sr_texture.hpp>
 
@@ -15,15 +16,19 @@ static const float kLookSensitivity = 0.0025f;   // radians per mouse pixel
 static const float kMinMoveSpeed    = 0.5f;      // wheel speed clamp: lower bound
 static const float kMaxMoveSpeed    = 60.0f;     // wheel speed clamp: upper bound
 
-static const float kPaddleMouseSens = 0.004f;    // paddle metres per mouse pixel
 static const float kPaddlePlaneX    = 1.6f;      // how far behind the table the
                                                  // paddles sit, off-table
 static const float kPaddleReachY    = 2.0f;      // upper reach of a paddle
 static const float kPaddleReachZ    = tt::kHalfWidZ; // lateral reach matches the table
-static const float kServePause      = 1.2f;      // seconds between points and the
-                                                 // next serve, so a reset is readable
 
 struct Game {
+    // ---- screens ------------------------------------------------------------
+    enum class Screen { Title, Playing, Paused, PointBanner };
+    Screen screen       = Screen::Title;
+    bool   wants_quit   = false;
+    float  banner_timer = 0.0f;
+    char   banner_text[32] = {0};
+
     // ---- table tennis -------------------------------------------------------
     mesh* ball           = nullptr;
     tt::Ball ball_phys;
@@ -34,6 +39,7 @@ struct Game {
     float paddle_width    = 0.3f;
     float paddle_height   = 0.5f;
     float paddle_depth    = 0.04f;
+    float paddle_mouse_sens = 0.004f;   // paddle metres per mouse pixel
     vec3  paddle_albedo   = vec3(0.2f, 0.2f, 0.8f);
 
     // AI paddle (+x side): chases the predicted ball position
@@ -55,6 +61,8 @@ struct Game {
     int   points_player  = 0;
     int   points_ai      = 0;
     float serve_hold     = 0.0f;      // seconds to wait between points before serving
+    float serve_pause    = 1.2f;      // seconds between points and the next serve
+
     tt::Side next_server = tt::Side::Player;
 
     // ---- camera rig: above and behind the player's paddle -------------
@@ -66,6 +74,10 @@ struct Game {
 
     float time = 0.0f;
 };
+
+// The enum lives inside Game (it is game state); free functions in this file
+// refer to it unqualified.
+using Screen = Game::Screen;
 
 // One frame of the camera rig: move `pos` towards the anchor above/behind the
 // player's paddle, then point at the table.  Lerp factor `k` keeps the motion
@@ -261,8 +273,57 @@ static bool paddle_contact(const tt::Ball& b, const vec3& prev,
     return in_y && in_z && toward && bounced_once;
 }
 
+// Publish the current sim state as a World: camera pose plus the three moving
+// entities. Static scenery lives in the SceneRuntime and is not repeated here.
+static void publish_world(Game* d, World& out) {
+    out.camera.pos   = d->position;
+    out.camera.euler = vec3(d->pitch, d->yaw, 0.0f);
+
+    out.dynamic.clear();
+
+    if (d->ball) {
+        Entity ball_ent;
+        ball_ent.geo    = d->ball;
+        ball_ent.albedo = vec3(1.0f, 1.0f, 1.0f);
+        ball_ent.rough  = 0.2f;
+        ball_ent.metallic = 0.0f;
+        ball_ent.shadow = true;
+        out.dynamic.push_back(ball_ent);
+    }
+
+    if (d->paddle) {
+        Entity paddle_ent;
+        paddle_ent.geo    = d->paddle;
+        paddle_ent.albedo = d->paddle_albedo;
+        paddle_ent.rough  = 0.4f;
+        paddle_ent.metallic = 0.0f;
+        paddle_ent.shadow = true;
+        out.dynamic.push_back(paddle_ent);
+    }
+
+    if (d->paddle_ai) {
+        Entity ai_ent;
+        ai_ent.geo    = d->paddle_ai;
+        ai_ent.albedo = d->paddle_ai_albedo;
+        ai_ent.rough  = 0.4f;
+        ai_ent.metallic = 0.0f;
+        ai_ent.shadow = true;
+        out.dynamic.push_back(ai_ent);
+    }
+
+    out.lights.clear();
+}
+
 void game_update(Game* d, const InputState& in, float dt, World& out) {
     d->time += dt;
+
+    // Title and Paused freeze the rally; the scene still renders and the camera
+    // rig keeps easing, so the background is alive behind the menu.
+    if (d->screen == Screen::Title || d->screen == Screen::Paused) {
+        update_camera_rig(d);
+        publish_world(d, out);
+        return;
+    }
 
     const float table_top = tt::kPlateTopY;
     const vec3  ball_prev = d->ball_phys.pos;
@@ -283,8 +344,8 @@ void game_update(Game* d, const InputState& in, float dt, World& out) {
     // ---- paddle control: player paddle follows mouse deltas ----
     // SDL reports +look_y when the mouse moves DOWN, so subtracting keeps
     // "mouse up = paddle up".
-    d->paddle_pos.z += in.look_x * kPaddleMouseSens;
-    d->paddle_pos.y -= in.look_y * kPaddleMouseSens;
+    d->paddle_pos.z += in.look_x * d->paddle_mouse_sens;
+    d->paddle_pos.y -= in.look_y * d->paddle_mouse_sens;
     d->paddle_pos.z = std::clamp(d->paddle_pos.z, -kPaddleReachZ, kPaddleReachZ);
     d->paddle_pos.y = std::clamp(d->paddle_pos.y, tt::kFloorY + 0.1f, kPaddleReachY);
 
@@ -327,10 +388,22 @@ void game_update(Game* d, const InputState& in, float dt, World& out) {
 
     // ---- point scored -> pause, then serve again ---
     if (ev == tt::Event::PointPlayer || ev == tt::Event::PointAI) {
-        if (ev == tt::Event::PointPlayer) d->points_player++;
-        else                              d->points_ai++;
+        if (ev == tt::Event::PointPlayer) {
+            d->points_player++;
+            snprintf(d->banner_text, sizeof(d->banner_text), "Punto Jugador");
+        } else {
+            d->points_ai++;
+            snprintf(d->banner_text, sizeof(d->banner_text), "Punto IA");
+        }
         d->next_server = other(d->ball_phys.server);
-        d->serve_hold  = kServePause;
+        d->serve_hold  = d->serve_pause;
+        d->screen      = Screen::PointBanner;
+    }
+
+    // The serve timer expiring returns us from the point banner to the rally.
+    if (d->screen == Screen::PointBanner && !d->ball_phys.dead) {
+        d->screen = Screen::Playing;
+        d->banner_text[0] = '\0';
     }
 
     // ---- update mesh positions ---
@@ -348,45 +421,7 @@ void game_update(Game* d, const InputState& in, float dt, World& out) {
     update_camera_rig(d);
 
     // ---- publish the world -------------------------------------------------
-    out.camera.pos   = d->position;
-    out.camera.euler = vec3(d->pitch, d->yaw, 0.0f);
-
-    out.dynamic.clear();
-
-    // Ball
-    if (d->ball) {
-        Entity ball_ent;
-        ball_ent.geo    = d->ball;
-        ball_ent.albedo = vec3(1.0f, 1.0f, 1.0f);
-        ball_ent.rough  = 0.2f;
-        ball_ent.metallic = 0.0f;
-        ball_ent.shadow = true;
-        out.dynamic.push_back(ball_ent);
-    }
-
-    // Player paddle
-    if (d->paddle) {
-        Entity paddle_ent;
-        paddle_ent.geo    = d->paddle;
-        paddle_ent.albedo = d->paddle_albedo;
-        paddle_ent.rough  = 0.4f;
-        paddle_ent.metallic = 0.0f;
-        paddle_ent.shadow = true;
-        out.dynamic.push_back(paddle_ent);
-    }
-
-    // AI paddle
-    if (d->paddle_ai) {
-        Entity ai_ent;
-        ai_ent.geo    = d->paddle_ai;
-        ai_ent.albedo = d->paddle_ai_albedo;
-        ai_ent.rough  = 0.4f;
-        ai_ent.metallic = 0.0f;
-        ai_ent.shadow = true;
-        out.dynamic.push_back(ai_ent);
-    }
-
-    out.lights.clear();
+    publish_world(d, out);
 }
 
 void game_destroy(Game* d) {
@@ -409,3 +444,107 @@ const char* game_status(const Game* d) {
 
 void game_set_point_light(Game* d, bool on) { (void)d; (void)on; }
 bool game_point_light(const Game* d) { (void)d; return false; }
+
+void game_debug_vars(Game* d, DebugVars& out) {
+    // Materials (re-authored? no — the static BVH is baked at init, so these
+    // only affect the dynamic entity shading; kept here as the canonical set).
+    out.add("Materials", "table_rough",    &d->table_rough,    0.0f, 1.0f);
+    out.add("Materials", "floor_rough",    &d->floor_rough,    0.0f, 1.0f);
+    out.add("Materials", "floor_metallic", &d->floor_metallic, 0.0f, 1.0f);
+
+    // Gameplay tuning.
+    out.add("Gameplay", "paddle_ai_speed",   &d->paddle_ai_speed,   0.0f, 20.0f);
+    out.add("Gameplay", "paddle_mouse_sens", &d->paddle_mouse_sens, 0.0f, 0.02f);
+    out.add("Gameplay", "serve_pause",       &d->serve_pause,       0.0f, 5.0f);
+    out.add("Gameplay", "serve_hold",        &d->serve_hold,        0.0f, 5.0f);
+}
+
+bool game_wants_quit(const Game* d) { return d->wants_quit; }
+
+void game_begin_match(Game* d) {
+    d->screen = Screen::Playing;
+    tt::serve(d->ball_phys, tt::Side::Player);
+    d->next_server = tt::Side::Player;
+    d->serve_hold  = 0.0f;
+    d->banner_text[0] = '\0';
+}
+
+// The game's own UI. It is pure geometry: every call appends quads to the
+// UiContext's draw list, which app/ rasterizes. During a rally the pointer is
+// released back to the game (relative mouse); on menus it is requested.
+void game_ui(Game* d, UiContext& ui) {
+    const vec2 vs = ui.virtual_size();
+
+    switch (d->screen) {
+    case Screen::Title: {
+        ui.request_pointer(true);
+        ui.rect({ 0.0f, 0.0f, vs.x, vs.y }, 0x66000000);
+        ui.text(vec2(vs.x * 0.5f, vs.y * 0.28f), "TENIS DE MESA", 3,
+                0xFFFFFFFFu, UiAlign::Center);
+
+        const float bw = 200.0f, bh = 36.0f;
+        const UiRect play{ (vs.x - bw) * 0.5f, vs.y * 0.52f, bw, bh };
+        const UiRect quit{ (vs.x - bw) * 0.5f, vs.y * 0.52f + 56.0f, bw, bh };
+
+        if (ui.button(1, play, "Jugar")) {
+            game_begin_match(d);
+        }
+        if (ui.button(2, quit, "Salir")) d->wants_quit = true;
+
+        ui.text(vec2(vs.x * 0.5f, vs.y - 32.0f),
+                "Flechas: navegar   Enter: aceptar", 1, 0xFFA8B0BCu,
+                UiAlign::Center);
+        break;
+    }
+
+    case Screen::Playing:
+    case Screen::PointBanner: {
+        ui.request_pointer(false);
+
+        char score[32];
+        snprintf(score, sizeof(score), "%d  -  %d",
+                 d->points_player, d->points_ai);
+        const UiRect panel = ui.anchor(UiAnchor::Top, vec2(200.0f, 44.0f), vec2(0.0f, 16.0f));
+        ui.rect(panel, 0x99000000);
+        ui.text(vec2(panel.x + panel.w * 0.5f, panel.y + 10.0f), score, 3,
+                0xFFFFFFFFu, UiAlign::Center);
+
+        const char* srv = d->next_server == tt::Side::Player ? "Saca: Jugador"
+                                                             : "Saca: IA";
+        ui.text(vec2(16.0f, 16.0f), srv, 1, 0xFFCCCCCCu);
+        ui.text(vec2(vs.x - 16.0f, 16.0f), "[Backspace] pausa", 1,
+                0xFF888888u, UiAlign::Right);
+
+        if (d->screen == Screen::PointBanner && d->banner_text[0]) {
+            const vec2 ts = ui.text_size(d->banner_text, 2);
+            const UiRect bp = ui.anchor(UiAnchor::Center,
+                                        vec2(ts.x + 40.0f, ts.y + 24.0f), vec2(0.0f, 0.0f));
+            ui.rect(bp, 0xAA000000);
+            ui.text(vec2(bp.x + bp.w * 0.5f, bp.y + 12.0f), d->banner_text, 2,
+                    0xFFFFE27Au, UiAlign::Center);
+        }
+
+        if (ui.back_pressed()) d->screen = Screen::Paused;
+        break;
+    }
+
+    case Screen::Paused: {
+        ui.request_pointer(true);
+        ui.rect({ 0.0f, 0.0f, vs.x, vs.y }, 0x88000000);
+        ui.text(vec2(vs.x * 0.5f, vs.y * 0.34f), "PAUSA", 3, 0xFFFFFFFFu,
+                UiAlign::Center);
+
+        const float bw = 220.0f, bh = 36.0f;
+        const UiRect cont{ (vs.x - bw) * 0.5f, vs.y * 0.52f, bw, bh };
+        const UiRect title{ (vs.x - bw) * 0.5f, vs.y * 0.52f + 56.0f, bw, bh };
+
+        if (ui.button(3, cont, "Continuar"))  d->screen = Screen::Playing;
+        if (ui.button(4, title, "Salir al titulo")) {
+            d->screen = Screen::Title;
+            d->points_player = d->points_ai = 0;
+        }
+        if (ui.back_pressed()) d->screen = Screen::Playing;
+        break;
+    }
+    }
+}

@@ -74,10 +74,10 @@ about" rules):
 
 ```mermaid
 flowchart TB
-    app["app/\n(the runtime — owns the loop)"]
-    game["game/\n(business logic)"]
+    app["app/\n(the runtime — owns the loop)\napp_debug.cpp (ImGui), app_ui.cpp (SDL submit)"]
+    game["game/\n(business logic, game_ui)"]
     render["render/\n(pixels, 4 backends)"]
-    subsystems["subsystems/\n(scene fold, assets, anim, input — no loop)"]
+    subsystems["subsystems/\n(scene fold, assets, anim, input,\nui + debug — no loop, no SDL)"]
     core["core / math / io / sound\n(no dependencies upward)"]
 
     app --> game
@@ -131,9 +131,21 @@ sequenceDiagram
     Scene-->>App: RenderScene
     App->>Render: render(RenderScene, framebuffer)
     Render-->>App: framebuffer filled
-    App->>App: gizmo, debug overlays, HUD
-    Main->>Main: SDL_RenderCopy + Present
+    App->>App: dump capture, gizmo, debug overlays
+    App->>App: SDL_UpdateTexture(framebuffer)
+
+    Main->>App: app_present(dt)
+    App->>App: SDL_RenderCopy (letterboxed present_rect)
+    App->>Game: game_ui(UiContext)
+    Game-->>App: UiDrawList (window-res geometry)
+    App->>App: restore relative mouse mode per UI request
+    App->>App: app_debug::frame -> ImGui HUD + debugger
+    App->>App: SDL_RenderPresent
 ```
+
+The UI and the ImGui debugger are built **after** `SDL_RenderCopy`, at window
+resolution, and never write to the framebuffer. That is what keeps the dump a
+pure backend image.
 
 `game_create`/`game_init` and `scene.attach`/`init_camera` run once in
 `app_init`, before this loop starts — see the ordered-setup comment in
@@ -141,14 +153,18 @@ sequenceDiagram
 
 | Layer | Owns | Must never know about |
 |---|---|---|
-| [src/game/](src/game/) | scene content, simulation, camera rig | SDL, BVH, framebuffer, backends |
+| [src/game/](src/game/) | scene content, simulation, camera rig, its own `game_ui` screens | SDL, ImGui, BVH, framebuffer, backends |
 | [src/subsystems/scene/](src/subsystems/scene/) | both BVHs, folded tris, skybox, World→RenderScene | SDL, pixels |
-| [src/app/](src/app/) | window, pixels, HUD, hotkeys, frame driving — the only layer with a runtime loop | what is *in* the scene |
+| [src/subsystems/ui/](src/subsystems/ui/) | immediate-mode UI: font atlas, draw-list geometry | SDL, ImGui, pixels |
+| [src/subsystems/debug/](src/subsystems/debug/) | `DebugVars` registry (pointers, no drawing) | SDL, ImGui, render |
+| [src/app/](src/app/) | window, pixels, hotkeys, frame driving, ImGui debugger (`app_debug`), UI submit (`app_ui`) — the only layer with a runtime loop and the only one that includes ImGui | what is *in* the scene |
 | [src/render/](src/render/) | turning a RenderScene into pixels | the App type, game logic |
 
 The seam types are the contract: **`World`** (what exists, in gameplay terms) and
 **`RenderScene`** (a per-frame read-only view for backends). Swapping the game module
-means changing the four `game_*` calls in [app.cpp](src/app/app.cpp) and nothing else.
+means changing the `game_*` calls in [app.cpp](src/app/app.cpp) — `game_create`,
+`game_init`, `game_update`, `game_debug_vars`, `game_ui`, `game_wants_quit`,
+`game_status`, plus the point-light hooks the benchmark uses — and nothing else.
 
 `subsystems/` is not a game engine: it has no scheduler and owns no frame loop.
 It is a library of domain-specific building blocks (scene fold, asset loading,
@@ -175,16 +191,20 @@ cycled at runtime with `G` / `TAB`:
 
 **Host**
 - [src/main.cpp](src/main.cpp) — SDL init, main loop, frame cap, `run_bench()`
-- [src/app/app.cpp](src/app/app.cpp) — frame driving, SDL→`InputState` mapping, hotkeys
+- [src/app/app.cpp](src/app/app.cpp) — frame driving, SDL→`InputState` mapping, hotkeys, present
 - [src/app/app_state.hpp](src/app/app_state.hpp) — the `App` struct, everything the host owns
-- [src/app/app_hud.cpp](src/app/app_hud.cpp) — HUD text, options menu, debug overlays
+- [src/app/app_hud.cpp](src/app/app_hud.cpp) — framebuffer debug overlays only
+- [src/app/app_debug.cpp](src/app/app_debug.cpp) — Dear ImGui debugger + HUD overlay (the **only** TU that includes `imgui.h`); no-op when `WITH_IMGUI=OFF`
+- [src/app/app_ui.cpp](src/app/app_ui.cpp) — submit a `UiDrawList` through `SDL_RenderGeometryRaw`
 - [src/sr_config.hpp](src/sr_config.hpp) — CLI parsing + `global_config`
 
 **Seams**
 - [src/subsystems/scene/world.hpp](src/subsystems/scene/world.hpp) — `Entity`, `CameraPose`, `World`
 - [src/render/render_scene.hpp](src/render/render_scene.hpp) — `RenderScene`, `PointLight`, `RasterItem`
 - [src/subsystems/scene/scene_runtime.hpp](src/subsystems/scene/scene_runtime.hpp) — `SceneRuntime`, `RenderOpts`
-- [src/subsystems/input.hpp](src/subsystems/input.hpp) — `InputState` (intent, not devices)
+- [src/subsystems/input.hpp](src/subsystems/input.hpp) — `InputState` (intent, not devices) + `UiInput`
+- [src/subsystems/ui/ui_context.hpp](src/subsystems/ui/ui_context.hpp) — immediate-mode UI (`game_ui` writes into it)
+- [src/subsystems/debug/debug_vars.hpp](src/subsystems/debug/debug_vars.hpp) — `DebugVars` registry game/ exposes
 - [src/render/raytrace/accel.hpp](src/render/raytrace/accel.hpp) — `ISceneAccel`, `SceneHit`
 
 **Rendering**
@@ -199,6 +219,8 @@ cycled at runtime with `G` / `TAB`:
 **Subsystems / core**
 - [src/subsystems/assets/obj_loader.cpp](src/subsystems/assets/obj_loader.cpp) — OBJ→`mesh` and OBJ+MTL→`bvh::Tri`
 - [src/subsystems/anim/](src/subsystems/anim/) — procedural skinned character, keyframed camera paths
+- [src/subsystems/ui/](src/subsystems/ui/) — immediate-mode UI, 8x8 bitmap font atlas, draw-list builder (SDL-free)
+- [src/subsystems/debug/](src/subsystems/debug/) — `DebugVars`, the tunables registry
 - [src/core/](src/core/) — framebuffer, camera, texture, text, geometry, profiler, `sr_dump`
 - [src/math/](src/math/) — `vec2/3/4`, `mat4`; [src/io/](src/io/) vendored stb_image; [src/sound/](src/sound/) SDL2_mixer wrapper
 
@@ -241,6 +263,14 @@ Assets: `res/mall/`, `res/cornell/`, `res/data/`.
    `-cl-fast-relaxed-math`) so grazing self-intersections round the same way.
 8. **`BVH::MAX_DEPTH = 60` and `MAX_LEAF = 8` are load-bearing.** Traversal uses a
    fixed-size stack; unbounded depth corrupts the C stack as an intermittent crash.
+9. **No UI writes into the framebuffer.** The game UI is built as a `UiDrawList`
+   by `game_ui` and submitted by `app_ui` (`SDL_RenderGeometryRaw`); the ImGui
+   debugger is built by `app_debug`. Both run in `app_present` **after**
+   `SDL_RenderCopy`, so the `--dump` capture point (inside `app_render`) stays
+   pure backend image. ImGui is included by `app_debug.cpp` only;
+   `subsystems/ui` and `subsystems/debug` never include SDL or ImGui.
+   Headless `--dump`/`--bench` call `game_begin_match` so the dump hash is
+   unaffected by the title screen (which freezes the rally).
 
 ### Verifying the layer boundaries
 
@@ -263,6 +293,12 @@ grep -rn 'SDL_PollEvent\|while *( *true\|while *( *running' src/subsystems
 
 # core/ must not reach upward into any other layer
 grep -rln '#include.*<app/\|#include.*<game/\|#include.*<subsystems/\|#include.*<render/' src/core
+
+# ImGui only in app/ (app_debug.cpp is the one TU that includes it)
+grep -rln 'imgui' src | grep -v '^src/app/'
+
+# subsystems/ui and subsystems/debug never see SDL or ImGui
+grep -rn 'SDL_\|#include.*SDL\|imgui' src/subsystems/ui src/subsystems/debug
 ```
 
 ---
@@ -333,9 +369,12 @@ argument.
 | New light | `World::lights` (dynamic point light), or an emissive `add_static_quad` (area light, NEE) |
 | Change shading / BRDF / GI | `sr_raytrace.cpp`, then `KERNEL_SRC` in `sr_ocl.cpp` (see above) |
 | New material property | `bvh::Tri` in `bvh.hpp`, `Entity` in `world.hpp`, the fold in `scene_runtime.cpp`, `BVH::flatten()`, and the kernel's 32-float tri layout (slot `[19]` is a free pad; past 32 floats means changing `TSTRIDE`) |
-| New quality / debug toggle | `RenderOpts` → mirror into `RenderScene` in `build_frame()` → read it in the backend; then `menu_label` / `menu_value` / `menu_apply` in `app_hud.cpp` |
+| New quality / debug toggle | `RenderOpts` → mirror into `RenderScene` in `build_frame()` → read it in the backend; then add the widget to the **Render** panel in `app_debug.cpp` |
 | New render backend | Implement `IRenderBackend`, register it in `Renderer::init()` |
-| New input | `InputState` in `input.hpp` → map from SDL in `app.cpp` → consume in `game_update` |
+| New input | `InputState` in `input.hpp` → map from SDL in `app.cpp` → consume in `game_update` / `game_ui` |
+| New game screen / widget | `game.cpp` `game_ui()` (state machine in `Game::Screen`); the UI API is `subsystems/ui/ui_context.hpp` |
+| New adjustable game parameter | Register it in `game_debug_vars()` (`game.cpp`); it appears in the debugger's **Game** panel automatically |
+| New debug panel | A `draw_*_panel(App*)` in `app_debug.cpp`, called from `app_debug::frame` under `show_debugger` |
 | New per-frame timing | Add a `ProfSection` in `sr_profiler.hpp`, wrap the block in `PROF_SCOPE(...)` |
 
 ---

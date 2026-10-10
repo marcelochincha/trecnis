@@ -2,8 +2,10 @@
 
 #include <subsystems/scene/world.hpp>
 #include <subsystems/input.hpp>
+#include <subsystems/debug/debug_vars.hpp>
 
 class SceneRuntime;
+class UiContext;
 struct Game;
 
 // =============================================================================
@@ -29,6 +31,24 @@ void game_update(Game* d, const InputState& in, float dt, World& out);
 
 // Frees the scene, including the Game itself.
 void game_destroy(Game* d);
+
+// Expose the game's tunables (roughness, serve pacing, AI speed, ...) to the
+// debugger. Registers pointers into Game; call once after game_init and empty
+// the registry before game_destroy.
+void game_debug_vars(Game* d, DebugVars& out);
+
+// Build the game's own UI (title, scoreboard, pause, point banner) into the
+// immediate-mode context. Pure geometry: no pixels, no SDL.
+void game_ui(Game* d, UiContext& ui);
+
+// True once the player chose "Salir" in the title screen. app/ reads it and
+// stops the loop; the game itself never calls SDL.
+bool game_wants_quit(const Game* d);
+
+// Leave the title screen and serve: the state the interactive "Jugar" button
+// reaches. Also used by headless --dump/--bench so they capture a live rally
+// (the dump hash must not change just because a title screen now exists).
+void game_begin_match(Game* d);
 
 // ---- host hooks -------------------------------------------------------------
 // One line of scene state for the host HUD ("FLY" / "WALK").

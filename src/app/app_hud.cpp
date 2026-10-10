@@ -2,20 +2,9 @@
 #include <app/app.hpp>
 #include <render/raster/sr_raster.hpp>   // draw_gizmo_line
 #include <render/raytrace/sr_raytrace.hpp>
-#include <core/sr_text.hpp>
-#include <algorithm>
-#include <cstdio>
 
-const char* strategy_name(bvh::BuildStrategy s) {
-    return s == bvh::SAH ? "SAH" : s == bvh::Median ? "Median" : "Morton";
-}
-
-double tick_ms(uint64_t& since) {
-    uint64_t now = SDL_GetPerformanceCounter();
-    double ms = (now - since) * 1000.0 / SDL_GetPerformanceFrequency();
-    since = now;
-    return ms;
-}
+// Debug overlays drawn straight into the framebuffer. They sit below the dump
+// capture point, so they are only ever seen interactively, never in a dump.
 
 static void draw_aabb_wire(framebuffer& fb, const camera& cam, const AABB& b, uint32_t color) {
     vec3 c[8] = {
@@ -69,80 +58,4 @@ void draw_normals_debug(App* e) {
     for (const auto& t : e->scene.dynamic_tris()) draw_tri_vn(t);
     for (std::size_t i = 0; i < e->scene.static_bvh().triangle_count(); ++i)
         draw_tri_vn(e->scene.static_bvh().tri((int)i));
-}
-
-const int MENU_ITEMS = 7;
-
-static const char* menu_label(int i) {
-    static const char* L[MENU_ITEMS] = {
-        "Backend","Acceleration","Show BVH","Reflections",
-        "Ray bounces","Static build","Dyn build"
-    };
-    return L[i];
-}
-
-static const char* menu_value(const App* e, int i) {
-    switch (i) {
-        case 0: return e->renderer.current_name();
-        case 1: return e->opts.use_bvh       ? "BVH"        : "Brute force";
-        case 2: return e->show_bvh      ? "On"         : "Off";
-        case 3: return e->opts.reflections   ? "On"         : "Off";
-        case 4: { static char b[8]; snprintf(b,sizeof(b),"%d",e->opts.max_bounces); return b; }
-        case 5: return strategy_name(e->scene.static_strategy());
-        default: return strategy_name(e->opts.dynamic_strategy);
-    }
-}
-
-void menu_apply(App* e, int dir) {
-    switch (e->menu_cursor) {
-        case 0: e->renderer.cycle(dir); break;
-        case 1: e->opts.use_bvh       = !e->opts.use_bvh;       break;
-        case 2: e->show_bvh      = !e->show_bvh;      break;
-        case 3: e->opts.reflections   = !e->opts.reflections;   break;
-        case 4: e->opts.max_bounces = 1+((e->opts.max_bounces-1+(dir<0?2:1))%3); break;
-        case 5: {
-            // Changing the strategy only rebuilds the tree: the runtime keeps
-            // the authored scenery, so the scene is not re-created.
-            int s = ((int)e->scene.static_strategy() + (dir < 0 ? 2 : 1)) % 3;
-            e->scene.set_static_strategy((bvh::BuildStrategy)s);
-            e->scene.commit_static();
-            break;
-        }
-        case 6: {
-            int s = (int)e->opts.dynamic_strategy;
-            s = (s+(dir<0?2:1))%3;
-            e->opts.dynamic_strategy = (bvh::BuildStrategy)s;
-            break;
-        }
-    }
-}
-
-static void fill_rect_alpha(framebuffer& fb, int x0, int y0, int x1, int y1, uint32_t col) {
-    float a = (float)((col>>24)&0xFF)/255.0f;
-    int cr=(col>>16)&0xFF, cg=(col>>8)&0xFF, cb=col&0xFF;
-    for (int y = std::max(0,y0); y < std::min(fb.height,y1); ++y)
-        for (int x = std::max(0,x0); x < std::min(fb.width,x1); ++x) {
-            uint32_t d = fb.colorBuffer[y*fb.width+x];
-            int dr=(d>>16)&0xFF, dg=(d>>8)&0xFF, db=d&0xFF;
-            int r=(int)(cr*a+dr*(1.0f-a)), g=(int)(cg*a+dg*(1.0f-a)), b=(int)(cb*a+db*(1.0f-a));
-            fb.colorBuffer[y*fb.width+x] = 0xFF000000u|(r<<16)|(g<<8)|b;
-        }
-}
-
-void draw_menu(App* e) {
-    const int lh=18, pad=14, w=312;
-    const int h = pad+24+pad+lh*MENU_ITEMS+pad+18;
-    const int x = e->fb.width-w-12, y0=18;
-    fill_rect_alpha(e->fb, x, y0, x+w, y0+h, 0xE80B0E18);
-    fill_rect_alpha(e->fb, x, y0, x+w, y0+24, 0xFF1B6FB5);
-    draw_text(e->fb, x+10, y0+7, "OPTIONS   [M] close", 0xFFFFFFFF);
-    for (int i = 0; i < MENU_ITEMS; ++i) {
-        int ry = y0+24+pad+i*lh;
-        if (i == e->menu_cursor)
-            fill_rect_alpha(e->fb, x+6, ry-2, x+w-6, ry+lh-3, 0x603A66B0);
-        char line[96];
-        snprintf(line, sizeof(line), "%-13s %s", menu_label(i), menu_value(e,i));
-        draw_text(e->fb, x+14, ry, line, i==e->menu_cursor ? 0xFFFFE27A : 0xFFE8E8E8);
-    }
-    draw_text(e->fb, x+10, y0+h-16, "^/v select   </>  change", 0xFFA8B0BC);
 }

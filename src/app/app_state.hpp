@@ -8,6 +8,9 @@
 #include <subsystems/scene/scene_runtime.hpp>
 #include <subsystems/scene/world.hpp>
 #include <subsystems/input.hpp>
+#include <subsystems/debug/debug_vars.hpp>
+#include <subsystems/ui/ui_image.hpp>
+#include <subsystems/ui/ui_context.hpp>
 #include <render/renderer.hpp>
 
 struct Game;
@@ -32,6 +35,11 @@ struct App {
     Renderer    renderer;
     int         num_workers = -1;   // configured CPU thread count (from --threads)
 
+    // Where the framebuffer lands in the window, computed once per present
+    // (letterboxed integer scale, or fractional when the window is smaller than
+    // the fb). The game UI and the mouse mapping both read it.
+    SDL_Rect    present_rect = {0, 0, 0, 0};
+
     // ---- the frame ---------------------------------------------------------
     SceneRuntime scene;   // owns both BVHs, the folded tris and the skybox
     RenderOpts   opts;    // quality/debug knobs driven by the menu and hotkeys
@@ -41,14 +49,29 @@ struct App {
     // ---- the scene ---------------------------------------------------------
     Game* game = nullptr;
 
+    // Tunables game/ exposes to the debugger (pointers into Game). Emptied in
+    // app_shutdown before the Game is destroyed.
+    DebugVars debug_vars;
+
+    // ---- game UI (GPU-drawn, no framebuffer pixels) ------------------------
+    UiImages   ui_images;     // CPU-side registry (font atlas + any game art)
+    UiContext  ui;            // immediate-mode builder, rebuilt every present
+    std::vector<SDL_Texture*> ui_textures;      // one per ui_images entry
+    std::vector<int>          ui_tex_versions;  // uploaded version, for re-upload
+
     // ---- debug UI ----------------------------------------------------------
-    bool show_hud        = true;
-    bool hud_simple      = false;
+    bool show_hud        = true;    bool hud_simple      = false;
     bool show_bvh        = false;
     int  bvh_debug_depth = 12;   // wireframe: draw only nodes up to this depth
     bool show_normals    = false;
-    bool show_menu       = false;
-    int  menu_cursor     = 0;
+    bool show_debugger   = false;   // [M] Dear ImGui debugger
+
+    // Frametime history for the debugger's profiler plot. A ring buffer, not a
+    // Profiler change: the profiler itself stays a fixed-section accumulator.
+    static constexpr int kFrametimeSamples = 240;
+    float frametime_ms[kFrametimeSamples] = {0};
+    int   frametime_head = 0;
+    float frame_dt = 1.0f / 60.0f;   // last dt handed to app_render, for the HUD
 
     // Frame dump. Callers only raise the flag; the capture happens inside
     // app_render at the one point where the frame is still pure backend output
