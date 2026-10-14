@@ -158,10 +158,11 @@ void SceneRuntime::commit_static() {
     if (renderer_) renderer_->reload_scene(static_bvh_, skybox_, emissive_);
 }
 
-RenderScene SceneRuntime::build_frame(const World& w, const RenderOpts& o,
+RenderScene SceneRuntime::build_frame(const GameWorld& w, const RenderOpts& o,
                                       int width, int height) {
     cam_.setPosition(w.camera.pos);
-    cam_.setRotation(w.camera.euler);
+    if (w.camera.look_at_target) cam_.lookAt(w.camera.target);
+    else                          cam_.setRotation(w.camera.euler);
     cam_.setFov(w.camera.fov);
 
     // Refold every dynamic entity and rebuild the dynamic tree. This happens

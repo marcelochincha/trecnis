@@ -28,15 +28,26 @@ struct Entity {
 
 // Where the camera is this frame. A camera rig writes this; it is the only
 // camera concept gameplay needs — no matrices, no aspect ratio, no clip planes.
+//
+// Two ways to orient it: `euler` (the default, used when look_at_target is
+// false) or `target` (when a rig already thinks in eye/target, like a
+// director that cuts between named shots). SceneRuntime::build_frame() is the
+// only place that turns either into the engine camera's rotation.
 struct CameraPose {
-    vec3  pos   = vec3(0.0f, 1.6f, 6.0f);
-    vec3  euler = vec3(0.0f, 0.0f, 0.0f);  // radians: pitch, yaw, roll
-    float fov   = 90.0f;                   // horizontal, degrees
+    vec3  pos            = vec3(0.0f, 1.6f, 6.0f);
+    vec3  euler          = vec3(0.0f, 0.0f, 0.0f);  // radians: pitch, yaw, roll
+    float fov            = 90.0f;                   // horizontal, degrees
+    bool  look_at_target = false;  // true: orient from `target` instead of `euler`
+    vec3  target         = vec3(0.0f, 0.0f, 0.0f);
 };
 
 // Everything that moves. Static scenery is pushed once into the SceneRuntime
 // instead (it lives in a separate tree that is not rebuilt per frame).
-struct World {
+//
+// Named GameWorld, not World: game logic built on top of an external core
+// (src/core_rtt/) brings its own `World` type, and the two must coexist in
+// the same binary without a name collision.
+struct GameWorld {
     std::vector<Entity>     dynamic;
     std::vector<PointLight> lights;
     CameraPose              camera;

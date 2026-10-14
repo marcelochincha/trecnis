@@ -43,7 +43,7 @@ struct App {
     // ---- the frame ---------------------------------------------------------
     SceneRuntime scene;   // owns both BVHs, the folded tris and the skybox
     RenderOpts   opts;    // quality/debug knobs driven by the menu and hotkeys
-    World        world;   // what exists this frame, written by the scene
+    GameWorld    world;   // what exists this frame, written by the scene
     InputState   input;   // this frame's intent, mapped from SDL
 
     // ---- the scene ---------------------------------------------------------

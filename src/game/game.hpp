@@ -27,7 +27,7 @@ void game_init(Game* d, SceneRuntime& scene);
 
 // One simulation step: advance the scene by `dt` under `in`, then describe the
 // result in `out`. `out` is rewritten, not appended to.
-void game_update(Game* d, const InputState& in, float dt, World& out);
+void game_update(Game* d, const InputState& in, float dt, GameWorld& out);
 
 // Frees the scene, including the Game itself.
 void game_destroy(Game* d);

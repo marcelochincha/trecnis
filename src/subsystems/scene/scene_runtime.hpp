@@ -89,7 +89,7 @@ public:
     // ---- per frame (called by the host) ------------------------------------
     // Call after gameplay has moved everything (and after skinning). Refolds
     // every dynamic entity into the dynamic BVH and fills the render view.
-    RenderScene build_frame(const World& w, const RenderOpts& o,
+    RenderScene build_frame(const GameWorld& w, const RenderOpts& o,
                             int width, int height);
 
     // ---- introspection: HUD counters and the debug overlays -----------------

@@ -175,7 +175,10 @@ void draw_scene_panel(App* e) {
     ImGui::Begin("Scene");
     const CameraPose& c = e->world.camera;
     ImGui::Text("Camera pos   %.2f  %.2f  %.2f", c.pos.x, c.pos.y, c.pos.z);
-    ImGui::Text("Camera euler %.2f  %.2f  %.2f", c.euler.x, c.euler.y, c.euler.z);
+    if (c.look_at_target)
+        ImGui::Text("Camera target %.2f  %.2f  %.2f", c.target.x, c.target.y, c.target.z);
+    else
+        ImGui::Text("Camera euler %.2f  %.2f  %.2f", c.euler.x, c.euler.y, c.euler.z);
     ImGui::Text("Camera fov   %.1f", c.fov);
     ImGui::Separator();
     const bvh::BVH& sb = e->scene.static_bvh();
