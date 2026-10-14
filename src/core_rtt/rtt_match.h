@@ -44,8 +44,17 @@ typedef struct {
     const SwingSpace* space;  /* swingspace.xml for this character [DATA] */
     const CharacterSwingData* swings;   /* swingsolver_*.xml / swingspace.xml / ballfudge.xml [DATA] */
     Vec3          root;       /* character root on the floor */
+    Vec3          vel;        /* root velocity between swings (locomotion) */
+    Vec3          swing_root; /* root when the swing started; the swing's mover moves it from there */
     char          announcer_name[16];   /* e.g. "CHINESE" for cue names [DATA .td] */
 } Player;
+
+/* locomotion limits, characters.xml global block (per-character Loco* multipliers are all 1.0) [DATA] */
+typedef struct {
+    float rally_max_speed;     /* LocoRallyMaxSpeed 4.0 m/s */
+    float rally_max_accel;     /* LocoRallyMaxAccel 25.0 m/s^2 */
+    float rest_depth;          /* |z| a player stands at between points (live ~1.97) [CHOICE 2.0] */
+} LocoCfg;
 
 typedef struct {
     EventBus       bus;
@@ -64,6 +73,7 @@ typedef struct {
     int            auto_full_focus[RTT_MAX_PLAYERS];   /* profile +0x51 "auto activate full focus" */
     int            last_hitter;   /* DAT_806daf24: whose shot is in flight (player index) */
     AiData         ai_data;
+    LocoCfg        loco;
     Player         players[RTT_MAX_PLAYERS];
     AudioSystem*   audio;     /* optional (presentation) */
     CameraDirector* camera;   /* optional (presentation) */

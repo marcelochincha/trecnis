@@ -83,6 +83,9 @@ void world_init(World* w, const MatchSettings* s) {
     shot_character_sweden(&w->default_chr);
     swing_data_sweden(&w->default_swings);
     ai_data_default(&w->ai_data);
+    w->loco.rally_max_speed = 4.0f;
+    w->loco.rally_max_accel = 25.0f;
+    w->loco.rest_depth = 2.0f;
     w->settings = *s;
     w->rng.s = 12345u;
     w->players[0].side = SIDE_A;
@@ -110,7 +113,7 @@ void world_setup_cpu_match(World* w, float tier) {
         p->is_ai = 1;
         p->control_mode = 0;
         p->ai.level = tier;
-        p->root = v3(0.0f, 0.0f, p->side == SIDE_A ? 2.0f : -2.0f);   /* rest depth ~1.97 live [CHOICE 2.0] */
+        p->root = v3(0.0f, 0.0f, p->side == SIDE_A ? w->loco.rest_depth : -w->loco.rest_depth);
     }
 }
 
@@ -335,6 +338,70 @@ static void launch(World* w, Player* p, const ShotLaunch* L) {
     else             ev_post(&w->bus, p->side == SIDE_A ? EV_BALL_BOUNCE_PADDLE_A : EV_BALL_BOUNCE_PADDLE_B, p->side);
 }
 
+/* ---------------------------------------------------------------- locomotion */
+/* Root motion, two sources:
+ * - during a swing (started, until contact) the swing owns the root (pongLocomotionController
+ *   ShouldBlend: no locomotion blend while the solver has positional authority): the root moves from
+ *   where the swing started by the chosen blend's TotalMoverTrans (swingspace.xml, the clip's root
+ *   translation), turned into the world by the player's side [RTT data]. Linear in time up to the
+ *   contact [CHOICE: the clip's own root curve is not used];
+ * - otherwise the root accelerates toward a spot at LocoRallyMaxAccel, capped at LocoRallyMaxSpeed,
+ *   braking to arrive [DATA limits, CHOICE integrator]. The spot: the receiver of a ball in flight
+ *   stands so its first hittable sample is LOCO_CONTACT_SIDE to the side it already passes on
+ *   (forehand +x / backhand -x in the player frame), at the rest depth; everyone else returns to the
+ *   centre [CHOICE: RTT's gdai_BuildPositionCandidateGrid / reaction-cost model is not traced].
+ *   LOCO_CONTACT_SIDE is the mean |contact x| of the swings that struck the ball with the players
+ *   standing still (1784 contacts, tier 6, 30 seeds: 1240 forehand, 530 backhand, 14 in front). */
+#define LOCO_CONTACT_SIDE 0.72f
+static void loco_toward(Player* p, Vec3 target, const LocoCfg* c, float dt) {
+    Vec3 d = v3_sub(target, p->root);
+    d.y = 0.0f;
+    float dist = v3_len(d);
+    float want = dist > 1e-4f ? fminf(c->rally_max_speed, sqrtf(2.0f * c->rally_max_accel * dist)) : 0.0f;
+    Vec3 vdes = dist > 1e-4f ? v3_scale(d, want / dist) : v3(0.0f, 0.0f, 0.0f);
+    Vec3 dv = v3_sub(vdes, p->vel);
+    float dvl = v3_len(dv), amax = c->rally_max_accel * dt;
+    if (dvl > amax) dv = v3_scale(dv, amax / dvl);
+    p->vel = v3_add(p->vel, dv);
+    p->root = v3_add(p->root, v3_scale(p->vel, dt));
+}
+
+static void locomotion(World* w) {
+    RallyState rs = w->score.state;
+    if (rs == RS_PRE_SERVE || rs == RS_POINT_SCORED || rs == RS_LET || rs == RS_MATCH_OVER) {
+        for (int i = 0; i < RTT_MAX_PLAYERS; i++) w->players[i].vel = v3(0.0f, 0.0f, 0.0f);
+        return;
+    }
+    int awaiting = rs == RS_AWAIT_SERVE_RETURN || rs == RS_AWAIT_RETURN;
+    Side recv = awaiting ? w->score.striker : rtt_other(w->score.striker);
+    for (int i = 0; i < RTT_MAX_PLAYERS; i++) {
+        Player* p = &w->players[i];
+        float zrest = p->side == SIDE_A ? w->loco.rest_depth : -w->loco.rest_depth;
+        ShotState* st = &p->shot;
+        if (st->active && st->started && st->zone.blend) {
+            float span = st->t_contact - st->t_start;
+            float f = span > 0.0f ? rtt_clampf((w->path.clock - st->t_start) / span, 0.0f, 1.0f) : 1.0f;
+            Vec3 m = st->zone.blend->total_mover_trans;
+            Vec3 wm = p->side == SIDE_A ? m : v3(-m.x, m.y, -m.z);
+            p->root = v3_add(p->swing_root, v3_scale(v3(wm.x, 0.0f, wm.z), f));
+            p->vel = v3(0.0f, 0.0f, 0.0f);
+            continue;
+        }
+        Vec3 target = v3(0.0f, 0.0f, zrest);
+        if (p->side == recv) {
+            for (int k = 0; k < w->path.count; k++)
+                if (w->path.s[k].hittable && !w->path.s[k].bounced && w->path.s[k].t >= w->path.clock) {
+                    float m = p->side == SIDE_A ? 1.0f : -1.0f;           /* world x -> player-frame x */
+                    float bx = w->path.s[k].pos.x * m, rx = p->root.x * m;
+                    float want = bx >= rx ? bx - LOCO_CONTACT_SIDE : bx + LOCO_CONTACT_SIDE;
+                    target.x = want * m;
+                    break;
+                }
+        }
+        loco_toward(p, target, &w->loco, RTT_DT);
+    }
+}
+
 /* ---------------------------------------------------------------- frame */
 void world_tick(World* w, const PlayerInput in[RTT_MAX_PLAYERS]) {
     float dt = RTT_DT;
@@ -348,6 +415,8 @@ void world_tick(World* w, const PlayerInput in[RTT_MAX_PLAYERS]) {
             p->shot.active = 0;
             p->pace = 0.0f;
             p->serve_toss = 0.0f;
+            p->root = v3(0.0f, 0.0f, p->side == SIDE_A ? w->loco.rest_depth : -w->loco.rest_depth);
+            p->vel = v3(0.0f, 0.0f, 0.0f);   /* back to the rest spot for the serve [CHOICE] */
         }
         /* gdShotDataMgr__SelectRallyClip: cut to this point's clip (player count + receiving
          * side), no blend [RTT] */
@@ -462,6 +531,7 @@ void world_tick(World* w, const PlayerInput in[RTT_MAX_PLAYERS]) {
                     if (now_ok) {
                         st->started = 1;
                         st->t_start = w->path.clock;
+                        hitter->swing_root = hitter->root;
                         st->t_contact = zt.t_sample;
                         int k = -1;
                         for (int i = 0; i < w->path.count; i++) if (w->path.s[i].t == zt.t_sample) { k = i; break; }
@@ -506,6 +576,9 @@ void world_tick(World* w, const PlayerInput in[RTT_MAX_PLAYERS]) {
             }
         }
     }
+
+    /* 2b. root motion */
+    locomotion(w);
 
     /* 3. ball playback -> msgBall events */
     if (w->score.state != RS_PRE_SERVE && w->score.state != RS_POINT_SCORED && w->score.state != RS_LET) {
