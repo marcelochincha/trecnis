@@ -82,6 +82,7 @@ void world_init(World* w, const MatchSettings* s) {
     table_target_cfg_default(&w->tcfg);
     shot_character_sweden(&w->default_chr);
     swing_data_sweden(&w->default_swings);
+    ai_data_default(&w->ai_data);
     w->settings = *s;
     w->rng.s = 12345u;
     w->players[0].side = SIDE_A;
@@ -102,9 +103,8 @@ void world_init(World* w, const MatchSettings* s) {
 }
 
 void world_setup_cpu_match(World* w, float tier) {
-    /* the AI tier table: aidata.xml is not generated yet, so every curve reads 0.5 (demo_m1's
-     * stand-in) [CHOICE until the tiers are generated] */
-    for (int t = 0; t < AI_TIERS; t++) for (int f = 0; f < AI_FIELDS; f++) w->ai_data.tier[t][f] = 0.5f;
+    /* the tier table is the shipped aidata.xml (world_init); a tier is an integer ladder index,
+     * which is what ApplyDifficulty writes to gdaiDataMgr+0x50 for an exhibition match [RTT] */
     for (int i = 0; i < RTT_MAX_PLAYERS; i++) {
         Player* p = &w->players[i];
         p->is_ai = 1;
@@ -367,7 +367,11 @@ void world_tick(World* w, const PlayerInput in[RTT_MAX_PLAYERS]) {
             int own = w->score.points[i], opp = w->score.points[1 - i];
             ai_decide(&p->ai, &w->ai_data, own, opp, p->shot.active, &w->rng);
             ai_shot_input(w, p, w->score.state == RS_PRE_SERVE, &pin[i].shot);
-            pin[i].swing_pressed = p->ai.attempt_shot;
+            /* the CPU always asks to swing at the coming ball: gdai_DecisionTick has no "attempt"
+             * roll -- its ShotSelectionAwareness roll only gates WHICH shot (the waterfall), and a
+             * CPU starts the swing as soon as a target is found (ResolveSwingAimTarget start rule).
+             * The request itself (who raises it for a CPU) is not traced [CHOICE from both reads] */
+            pin[i].swing_pressed = 1;
         }
     }
 
@@ -461,7 +465,10 @@ void world_tick(World* w, const PlayerInput in[RTT_MAX_PLAYERS]) {
                         st->t_contact = zt.t_sample;
                         int k = -1;
                         for (int i = 0; i < w->path.count; i++) if (w->path.s[i].t == zt.t_sample) { k = i; break; }
-                        if (k >= 0 && zt.blend && !w->path.fudged) {
+                        /* AutoAimTick runs only behind gdBall__HasValidAimTarget (0x800d2584): a
+                         * miss swing (invalid target) leaves the flight alone, so the ball flies on
+                         * past the player instead of stopping at a contact that never comes [RTT] */
+                        if (k >= 0 && zt.blend && swing_target_valid(&zt) && !w->path.fudged) {
                             ball_fudge_to_contact(&w->path, k, to_world(hitter, zt.blend->contact_point),
                                                   zt.t_sample, w->path.clock, 1);
                             w->path.fudged = 1;

@@ -1,5 +1,16 @@
 #include "rtt_ai.h"
 
+#include <string.h>
+
+#include "data/ai_data.inc"
+
+void ai_data_default(AiData* d) {
+    memset(d, 0, sizeof(*d));
+    for (int t = 0; t < AI_TIERS; t++)
+        for (int f = 0; f < (int)(sizeof(ai_tiers[0]) / sizeof(ai_tiers[0][0])); f++)
+            d->tier[t][f] = ai_tiers[t][f];
+}
+
 float ai_curve(const AiData* d, AiField f, float x, float mod) {
     x = rtt_clampf(x, 0.0f, (float)(AI_TIERS - 1));
     int lo = (int)x, hi = lo + 1 < AI_TIERS ? lo + 1 : lo;
@@ -16,9 +27,11 @@ void ai_decide(AiContext* c, const AiData* d, int own, int opp, int has_hit_stat
     /* 2. movement */
     if (has_hit_state || c->focus_active) c->offensive_move = 0;
     else c->offensive_move = roll(rng, ai_curve(d, AIF_MOVE_OFFENSIVE, x, mm));
-    /* 3. shot selection, gated */
+    /* 3. shot selection, gated: a failed ShotSelectionAwareness roll skips the waterfall and the
+     * frame commits the neutral aim / charge (locals start at DAT_806de414) -- it does NOT stop the
+     * CPU from swinging (gdai_DecisionTick 0x800a2488) [RTT] */
     c->attempt_shot = roll(rng, ai_curve(d, AIF_SS_AWARENESS, x, ms));
-    if (!c->attempt_shot) return;
+    if (!c->attempt_shot) { c->out_aim = 0.0f; c->out_charge = 0.0f; return; }
     float aim = 0.0f, charge = 0.0f;
     c->kill_shot = roll(rng, ai_curve(d, AIF_USE_KILL_SHOT, x, ms) * c->aggression);
     if (c->kill_shot) {

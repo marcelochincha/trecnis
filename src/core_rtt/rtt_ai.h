@@ -55,6 +55,11 @@ typedef struct {
  * in reconstruction/ai.md, but the template treats it as a fractional tier index [OPEN]. */
 float ai_curve(const AiData* d, AiField f, float x, float awareness_mod);
 
+/* the shipped tiers (aidata.xml via tools/ai_data/gen_ai_data.py -> data/ai_data.inc); each column is
+ * the field RTT's curve for it actually reads. Awareness modifiers gdaiDataMgr+0x3c / +0x40 = 0
+ * [OPEN: their source]. */
+void ai_data_default(AiData* d);
+
 /* one decision tick (gdai_DecisionTick 0x800a2488) [RTT] */
 void ai_decide(AiContext* c, const AiData* d, int own_score, int opp_score, int has_hit_state, Rng* rng);
 

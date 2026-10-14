@@ -113,7 +113,7 @@ void game_init(Game* d, SceneRuntime& scene) {
 
     // The whole CPU-vs-CPU setup (AI tier table, difficulty, rest positions)
     // lives in the core, so this adapter never re-creates it by hand.
-    world_setup_cpu_match(&d->w, 8.0f);
+    world_setup_cpu_match(&d->w, 6.0f);   // aidata.xml ExhibitionMedium
 
     // Static geometry: floor and table, sized from the core's own TableGeom so
     // gameplay and the visuals cannot drift apart.
