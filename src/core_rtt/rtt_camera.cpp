@@ -175,3 +175,25 @@ void camera_update(CameraDirector* c, Vec3 ball_pos, Vec3 player_a_root, Vec3 pl
     c->target = v3_lerp(t0, t1, w);
     c->fov = rtt_lerpf(f0, f1, w);
 }
+
+/* ---------------------------------------------------------------- follow cam */
+void follow_cam_init(FollowCam* c, Side side) {
+    memset(c, 0, sizeof(*c));
+    c->side = side;
+    c->back = 3.2f; c->height = 2.7f;
+    c->look_z = 0.2f; c->look_y = 0.5f;
+    c->eye_follow = 0.8f; c->look_follow = 1.0f;
+    c->rate = 3.0f;
+    c->fov = 0.586f;
+}
+
+void follow_cam_update(FollowCam* c, Vec3 ball_pos, Vec3 player_root, float dt) {
+    float s = c->side == SIDE_A ? 1.0f : -1.0f;               /* +z for SIDE_A */
+    float rest = fabsf(player_root.z) > 1.0f ? fabsf(player_root.z) : 2.0f;
+    Vec3 eye = v3(player_root.x * c->eye_follow, c->height, s * (rest + c->back));
+    Vec3 tgt = v3(ball_pos.x * c->look_follow, c->look_y, -s * c->look_z);
+    if (!c->started) { c->eye = eye; c->target = tgt; c->started = 1; return; }
+    float k = 1.0f - expf(-c->rate * dt);                      /* frame-rate independent approach */
+    c->eye = v3_add(c->eye, v3_scale(v3_sub(eye, c->eye), k));
+    c->target = v3_add(c->target, v3_scale(v3_sub(tgt, c->target), k));
+}

@@ -35,6 +35,7 @@ static inline float fov_to_degrees(float radians) { return to_degrees(radians); 
 struct Game {
     World           w;
     CameraDirector  cam;
+    FollowCam       follow;
 
     mesh* ball      = nullptr;
     mesh* player_a  = nullptr;
@@ -45,6 +46,7 @@ struct Game {
     bool   wants_quit = false;
 
     float  sim_acc    = 0.0f;   // real time not yet simulated, in seconds
+    float  frame_dt   = 0.0f;   // real time of this frame (follow cam smoothing)
 };
 
 using Screen = Game::Screen;
@@ -52,25 +54,34 @@ using Screen = Game::Screen;
 // Mirrors the static scenery authored in game_init() so gameplay and the
 // vision cannot drift apart: table + floor sized from the core's own
 // TableGeom, the same way the old placeholder matched its own tt:: constants.
-// The view comes from rtt_camera's director (cuts on rally events, attack
-// blends from the view on screen, side shots placed by RTT's sidecam .cm
-// files). Its behind-the-player SwingCam placement and the cut rules are
-// still stand-ins until RTT's SwingCam evaluator and clips.xml graph are
-// traced. Set kFixedCamera to true to pin the view to RTT's ThreeQuarter side
-// cam (threequarter.cm SC_LookFrom / SC_LookAt) instead.
-static const bool kFixedCamera = false;
+// Which view drives the render:
+//  - Follow:   rtt_camera's follow cam -- behind player A, panning left/right
+//              with the player and the ball, no cuts (stand-in for RTT's
+//              SwingCam until the pongcam.ccm camera graph is ported);
+//  - Director: rtt_camera's cut director (rally-event cuts between stand-in
+//              swing shots and RTT's sidecam .cm placements);
+//  - Fixed:    RTT's ThreeQuarter side cam (threequarter.cm LookFrom/LookAt).
+enum class CamMode { Follow, Director, Fixed };
+static const CamMode kCamMode = CamMode::Follow;
 static const Vec3 kFixedEye    = { 4.0f, 3.5f, 5.0f };
 static const Vec3 kFixedTarget = { 0.0f, 0.75f, 0.0f };
 static const float kFixedFov   = 0.610865f;
 
 static void publish_world(Game* d, GameWorld& out) {
     const CameraDirector& c = d->cam;
-    // Before the first rally (title screen) the director has no shot yet.
-    const bool fixed = kFixedCamera || c.cur_shot < 0;
-    out.camera.pos            = to_vec3(fixed ? kFixedEye : c.eye);
-    out.camera.target         = to_vec3(fixed ? kFixedTarget : c.target);
+    Vec3  eye = kFixedEye, target = kFixedTarget;
+    float fov = kFixedFov;
+    if (kCamMode == CamMode::Follow) {
+        follow_cam_update(&d->follow, ball_pos_at(&d->w.path, d->w.path.clock), d->w.players[0].root,
+                          d->frame_dt);
+        eye = d->follow.eye; target = d->follow.target; fov = d->follow.fov;
+    } else if (kCamMode == CamMode::Director && c.cur_shot >= 0) {   // no shot before the first rally
+        eye = c.eye; target = c.target; fov = c.fov;
+    }
+    out.camera.pos            = to_vec3(eye);
+    out.camera.target         = to_vec3(target);
     out.camera.look_at_target = true;
-    out.camera.fov            = fov_to_degrees(fixed ? kFixedFov : c.fov);
+    out.camera.fov            = fov_to_degrees(fov);
 
     out.dynamic.clear();
 
@@ -110,6 +121,7 @@ void game_init(Game* d, SceneRuntime& scene) {
     world_init(&d->w, &settings);
 
     camera_init(&d->cam);
+    follow_cam_init(&d->follow, SIDE_A);
     d->w.camera = &d->cam;
     ev_subscribe(&d->w.bus, EV_COUNT_SENTINEL, camera_on_event, &d->cam);
 
@@ -153,6 +165,7 @@ void game_init(Game* d, SceneRuntime& scene) {
 void game_update(Game* d, const InputState& in, float dt, GameWorld& out) {
     (void)in;   // both players are AI; no human device feeds world_tick
 
+    d->frame_dt = dt;
     if (d->screen == Screen::Title) {
         publish_world(d, out);
         return;

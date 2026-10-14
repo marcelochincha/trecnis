@@ -107,4 +107,26 @@ void camera_on_event(void* user, const Event* e);
  * current/previous shot against the live ball position, write the output transform [RTT] */
 void camera_update(CameraDirector* c, Vec3 ball_pos, Vec3 player_a_root, Vec3 player_b_root, float dt);
 
+/* ------------------------------------------------------------------------------------------------
+ * Follow cam: one continuous behind-the-player view that pans left / right with the player and the
+ * ball, no cuts. A stand-in for RTT's SwingCam until the camera graph (tune/camera/pongcam.ccm, 70
+ * nodes, evaluated over the PongcamParams blackboard) is ported [CHOICE placement and gains; DATA:
+ * FOV 0.586 from swingcam/medium.cm, approach rate 3 from the .cm *ApproachRate fields].
+ * ------------------------------------------------------------------------------------------------ */
+typedef struct {
+    Side  side;              /* whose back the camera sits behind (SIDE_A = +z) */
+    float back, height;      /* eye: this far behind / above the player's rest line [CHOICE] */
+    float look_z, look_y;    /* target: on the table's centre line, this far toward the far end [CHOICE] */
+    float eye_follow;        /* share of the player's x the eye follows [CHOICE] */
+    float look_follow;       /* share of the ball's x the target follows [CHOICE] */
+    float rate;              /* exponential approach rate, 1/s (SC_PosApproachRate 3.0) [DATA] */
+    float fov;               /* swingcam/medium.cm FOV 0.586 [DATA] */
+    int   started;
+    Vec3  eye, target;       /* output */
+} FollowCam;
+
+void follow_cam_init(FollowCam* c, Side side);
+/* per frame: player = the root of the player the camera sits behind */
+void follow_cam_update(FollowCam* c, Vec3 ball_pos, Vec3 player_root, float dt);
+
 #endif /* RTT_CAMERA_H */
