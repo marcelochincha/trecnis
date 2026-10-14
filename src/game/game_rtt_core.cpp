@@ -52,23 +52,25 @@ using Screen = Game::Screen;
 // Mirrors the static scenery authored in game_init() so gameplay and the
 // vision cannot drift apart: table + floor sized from the core's own
 // TableGeom, the same way the old placeholder matched its own tt:: constants.
-// Fixed view for now: rtt_camera's cuts are not right yet (its ADSR release
-// swings back toward the old shot and then jumps, and the side shots look at
-// the floor), so the view is pinned to RTT's ThreeQuarter side cam as shipped
-// in tune/camera/sidecam/threequarter.cm (SC_LookFrom / SC_LookAt). That file
-// has only per-zone FOVs (SC_AA_Fov ...), not decoded yet, so the FOV is the
-// camera's default 0.610865 rad. Set to false to see the director again.
-static const bool kFixedCamera = true;
+// The view comes from rtt_camera's director (cuts on rally events, attack
+// blends from the view on screen, side shots placed by RTT's sidecam .cm
+// files). Its behind-the-player SwingCam placement and the cut rules are
+// still stand-ins until RTT's SwingCam evaluator and clips.xml graph are
+// traced. Set kFixedCamera to true to pin the view to RTT's ThreeQuarter side
+// cam (threequarter.cm SC_LookFrom / SC_LookAt) instead.
+static const bool kFixedCamera = false;
 static const Vec3 kFixedEye    = { 4.0f, 3.5f, 5.0f };
 static const Vec3 kFixedTarget = { 0.0f, 0.75f, 0.0f };
 static const float kFixedFov   = 0.610865f;
 
 static void publish_world(Game* d, GameWorld& out) {
     const CameraDirector& c = d->cam;
-    out.camera.pos            = to_vec3(kFixedCamera ? kFixedEye : c.eye);
-    out.camera.target         = to_vec3(kFixedCamera ? kFixedTarget : c.target);
+    // Before the first rally (title screen) the director has no shot yet.
+    const bool fixed = kFixedCamera || c.cur_shot < 0;
+    out.camera.pos            = to_vec3(fixed ? kFixedEye : c.eye);
+    out.camera.target         = to_vec3(fixed ? kFixedTarget : c.target);
     out.camera.look_at_target = true;
-    out.camera.fov            = fov_to_degrees(kFixedCamera ? kFixedFov : c.fov);
+    out.camera.fov            = fov_to_degrees(fixed ? kFixedFov : c.fov);
 
     out.dynamic.clear();
 

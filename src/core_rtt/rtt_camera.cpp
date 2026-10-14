@@ -13,6 +13,18 @@ static void add_shot(CameraDirector* c, const char* name, CamType t, CamTier tie
     s->fov = fov; s->top_down = top;
 }
 
+/* a SideCam whose placement is the shipped .cm file's SC_LookFrom / SC_LookAt, in world space
+ * (X right, Y up, Z along the table, 0 at the net). The file's 36 per-zone FOVs (SC_AA_Fov ..
+ * SC_FF_Fov, 0.43..1.77 rad) are not decoded (which zone, absolute or a factor) [OPEN]; the shot
+ * uses the common FOV 0.610865 [DATA default] */
+static void add_side_shot(CameraDirector* c, const char* name, CamTier tier, Vec3 from, Vec3 at) {
+    add_shot(c, name, CAMT_SIDE, tier, 0.0f, 0.0f, 0.0f, 0.610865f, 0);
+    CamShot* s = &c->shots[c->shot_count - 1];
+    s->fixed = 1;
+    s->look_from = from;
+    s->look_at = at;
+}
+
 /* dests shared by every clip: the rally-event vocabulary from clips.xml (map/camera.md §3),
  * mapped onto the subset of that vocabulary this reconstruction's EventBus actually posts
  * [RTT vocabulary identity, CHOICE which EventId stands for each named Condition] */
@@ -65,10 +77,11 @@ void camera_init(CameraDirector* c) {
     add_shot(c, "SwingNear",  CAMT_SWING, CAM_TIER_NEAR,   2.2f, 1.6f, 0.0f, 0.70f, 0);
     add_shot(c, "SwingMed",   CAMT_SWING, CAM_TIER_MEDIUM, 3.6f, 1.9f, 0.0f, 0.61f, 0);  /* FOV default DAT 0.610865 [DATA] */
     add_shot(c, "SwingFar",   CAMT_SWING, CAM_TIER_FAR,    5.4f, 2.4f, 0.0f, 0.55f, 0);
-    /* CAM_SIDE: the broadcast angle, off to one side of the table [OPEN numeric tuning] */
-    add_shot(c, "SideThreeQ", CAMT_SIDE,  CAM_TIER_NEAR,   0.0f, 2.0f, 4.5f, 0.61f, 0);
-    add_shot(c, "SideSide",   CAMT_SIDE,  CAM_TIER_MEDIUM, 0.0f, 1.4f, 6.0f, 0.55f, 0);
-    add_shot(c, "SideTop",    CAMT_SIDE,  CAM_TIER_FAR,    0.0f, 6.0f, 0.0f, 0.70f, 1);
+    /* CAM_SIDE: shots.xml ThreeQuarter / Side / TopDown, placed by sidecam/threequarter.cm,
+     * side.cm, topdown.cm [DATA] */
+    add_side_shot(c, "SideThreeQ", CAM_TIER_NEAR,   v3(4.0f, 3.5f, 5.0f), v3(0.0f, 0.75f, 0.0f));
+    add_side_shot(c, "SideSide",   CAM_TIER_MEDIUM, v3(9.0f, 5.2f, 0.0f), v3(-1.6f, 0.0f, 0.0f));
+    add_side_shot(c, "SideTop",    CAM_TIER_FAR,    v3(5.0f, 10.0f, 0.0f), v3(-0.4f, 0.0f, 0.0f));
 
     static const int all_shots[] = { SH_SWING_NEAR, SH_SWING_MED, SH_SWING_FAR, SH_SIDE_3Q, SH_SIDE_SIDE, SH_SIDE_TOP };
     /* 4 clips mirror gdShotDataMgr__SelectRallyClip's 4-entry table: OnePlayerPZ/NZ, TwoPlayerPZ/NZ
@@ -85,6 +98,7 @@ void camera_rally_start(CameraDirector* c, int player_count, Side receiving_side
     c->active_clip = idx;
     c->cur_shot = c->prev_shot = c->clips[idx].default_inst;
     c->blend_t = 1e9f;                                      /* hard cut, no blend-in at rally start [RTT] */
+    c->has_from = 0;
     c->blend_env = c->clips[idx].env;
 }
 
@@ -97,6 +111,8 @@ void camera_on_event(void* user, const Event* e) {
         if (clip->dests[i].target_shot == c->cur_shot) return;
         c->prev_shot = c->cur_shot;
         c->cur_shot = clip->dests[i].target_shot;
+        c->has_from = 1;
+        c->from_eye = c->eye; c->from_target = c->target; c->from_fov = c->fov;
         c->blend_t = -clip->dests[i].time_bias;              /* ConditionTimeBias delays the cut [DATA] */
         c->blend_env = clip->env;
         return;
@@ -115,6 +131,9 @@ static void shot_eval(const CamShot* s, Vec3 ball, Vec3 receiver_root, Vec3 stri
         if (v3_len(dir) < 1e-5f) dir = v3(0, 0, 1);
         *eye = v3_add(receiver_root, v3(dir.x * s->back_dist, s->height, dir.z * s->back_dist));
         *tgt = v3_lerp(receiver_root, ball, 0.5f);                  /* tracking: half-receiver, half-ball [OPEN] */
+    } else if (s->fixed) {
+        *eye = s->look_from;
+        *tgt = s->look_at;
     } else {
         /* side-on broadcast angle, net height, offset along X [RTT structure] */
         Vec3 mid = v3_scale(v3_add(receiver_root, striker_root), 0.5f);
@@ -129,11 +148,15 @@ void camera_update(CameraDirector* c, Vec3 ball_pos, Vec3 player_a_root, Vec3 pl
     if (c->cur_shot < 0) return;
     Vec3 e1, t1, e0, t0; float f1, f0;
     shot_eval(&c->shots[c->cur_shot], ball_pos, player_a_root, player_b_root, &e1, &t1, &f1);
-    int prev = c->prev_shot < 0 ? c->cur_shot : c->prev_shot;
-    shot_eval(&c->shots[prev], ball_pos, player_a_root, player_b_root, &e0, &t0, &f0);
+    if (c->has_from) {
+        e0 = c->from_eye; t0 = c->from_target; f0 = c->from_fov;
+    } else {
+        int prev = c->prev_shot < 0 ? c->cur_shot : c->prev_shot;
+        shot_eval(&c->shots[prev], ball_pos, player_a_root, player_b_root, &e0, &t0, &f0);
+    }
 
     c->blend_t += dt;
-    /* full ADSR weight: ramp in over Attack, hold through Decay+Sustain, ramp out over Release
+    /* blend weight of the new shot: ramps in over Attack, then the cut locks (see CamEnvelope)
      * (CMtoCSAdapter__RunEvaluatorAndFill: blend runs until camViewCS phase == 4) [RTT] */
     const CamEnvelope* env = &c->blend_env;
     float w;
@@ -142,16 +165,11 @@ void camera_update(CameraDirector* c, Vec3 ball_pos, Vec3 player_a_root, Vec3 pl
     } else if (c->blend_t < env->attack) {
         w = env->attack > 0.0f ? c->blend_t / env->attack : 1.0f;
     } else {
-        float hold_end = env->attack + env->decay + env->sustain;
-        if (c->blend_t < hold_end) {
-            w = 1.0f;
-        } else {
-            float rel_t = c->blend_t - hold_end;
-            w = env->release > 0.0f ? rtt_clampf(1.0f - rel_t / env->release, 0.0f, 1.0f) : 0.0f;
-            /* once the outgoing shot has fully faded there is nothing left to blend from; lock to
-             * the new shot so a very short Release doesn't leave a flicker at w==0 [RTT: phase==4] */
-            if (w <= 0.0f) { c->prev_shot = c->cur_shot; w = 1.0f; e0 = e1; t0 = t1; f0 = f1; }
-        }
+        /* attack done: the blend is over, lock to the new shot (camViewCS phase 4) [RTT lock,
+         * OPEN what Decay / Sustain / Release do -- see CamEnvelope] */
+        c->prev_shot = c->cur_shot;
+        c->has_from = 0;
+        w = 1.0f;
     }
     c->eye = v3_lerp(e0, e1, w);
     c->target = v3_lerp(t0, t1, w);

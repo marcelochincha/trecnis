@@ -39,6 +39,8 @@ typedef struct {
     float   side_dist;     /* SideCam: distance off to the broadcast side [OPEN] */
     float   fov;           /* SW_NearFOV / SW_FarBackFOV family, or SideCam FOV [OPEN] */
     int     top_down;      /* SideCam TopDown tier: look straight down [OPEN] */
+    int     fixed;         /* SideCam from its .cm: eye / target are the file's world points */
+    Vec3    look_from, look_at;   /* SC_LookFrom / SC_LookAt (tune/camera/sidecam/ .cm files) [DATA] */
 } CamShot;
 
 /* a conditional cut inside a clip (clips.xml gdCameraDest) [RTT] */
@@ -48,8 +50,10 @@ typedef struct {
     float   time_bias;      /* ConditionTimeBias [DATA] */
 } CamDest;
 
-/* ADSR blend envelope (clips.xml gdEnvelope) [RTT] -- weight ramps attack -> holds through decay+
- * sustain -> ramps out over release; CMtoCSAdapter__RunEvaluatorAndFill drives exactly this shape */
+/* ADSR blend envelope (clips.xml gdEnvelope) [RTT]. The port uses Attack only: the new shot's weight
+ * ramps 0 -> 1 over Attack, then the cut locks to the new shot (camViewCS phase 4). How Decay /
+ * Sustain / Release shape the blend is not traced [OPEN]; reading Release as "fade the new shot
+ * back out" swung the eye back to the old shot and then jumped (7 m in one frame). */
 typedef struct { float attack, decay, sustain, release; } CamEnvelope;
 
 /* a clip = one rally/shot-moment state machine (clips.xml gdCameraDef): a small set of camera
@@ -77,6 +81,13 @@ typedef struct {
 
     Vec3     eye, target;               /* output transform */
     float    fov;
+    /* where a cut blends FROM: the view on screen when the cut fired (CMtoCSAdapter__SwitchEvaluators
+     * takes the installed evaluator -- the current, possibly mid-blend view -- as the outgoing one).
+     * Blending from the old shot's pure pose instead made a cut that interrupts another cut jump
+     * back ~4 m. Frozen at cut time [CHOICE: RTT keeps stepping the outgoing evaluator]. */
+    int      has_from;
+    Vec3     from_eye, from_target;
+    float    from_fov;
 } CameraDirector;
 
 /* fills the 6-shot / clip set with the recovered shots.xml/clips.xml structure (TwoPlayerPZ /
