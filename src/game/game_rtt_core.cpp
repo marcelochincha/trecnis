@@ -43,6 +43,8 @@ struct Game {
     enum class Screen { Title, Playing };
     Screen screen     = Screen::Title;
     bool   wants_quit = false;
+
+    float  sim_acc    = 0.0f;   // real time not yet simulated, in seconds
 };
 
 using Screen = Game::Screen;
@@ -50,12 +52,23 @@ using Screen = Game::Screen;
 // Mirrors the static scenery authored in game_init() so gameplay and the
 // vision cannot drift apart: table + floor sized from the core's own
 // TableGeom, the same way the old placeholder matched its own tt:: constants.
+// Fixed view for now: rtt_camera's cuts are not right yet (its ADSR release
+// swings back toward the old shot and then jumps, and the side shots look at
+// the floor), so the view is pinned to RTT's ThreeQuarter side cam as shipped
+// in tune/camera/sidecam/threequarter.cm (SC_LookFrom / SC_LookAt). That file
+// has only per-zone FOVs (SC_AA_Fov ...), not decoded yet, so the FOV is the
+// camera's default 0.610865 rad. Set to false to see the director again.
+static const bool kFixedCamera = true;
+static const Vec3 kFixedEye    = { 4.0f, 3.5f, 5.0f };
+static const Vec3 kFixedTarget = { 0.0f, 0.75f, 0.0f };
+static const float kFixedFov   = 0.610865f;
+
 static void publish_world(Game* d, GameWorld& out) {
     const CameraDirector& c = d->cam;
-    out.camera.pos            = to_vec3(c.eye);
-    out.camera.target         = to_vec3(c.target);
+    out.camera.pos            = to_vec3(kFixedCamera ? kFixedEye : c.eye);
+    out.camera.target         = to_vec3(kFixedCamera ? kFixedTarget : c.target);
     out.camera.look_at_target = true;
-    out.camera.fov            = fov_to_degrees(c.fov);
+    out.camera.fov            = fov_to_degrees(kFixedCamera ? kFixedFov : c.fov);
 
     out.dynamic.clear();
 
@@ -98,12 +111,9 @@ void game_init(Game* d, SceneRuntime& scene) {
     d->w.camera = &d->cam;
     ev_subscribe(&d->w.bus, EV_COUNT_SENTINEL, camera_on_event, &d->cam);
 
-    for (int i = 0; i < RTT_MAX_PLAYERS; i++) {
-        d->w.players[i].is_ai        = 1;
-        d->w.players[i].control_mode = 0;
-    }
-    d->w.players[0].root = v3(0.0f, 0.0f,  d->w.table.half_length + 0.6f);
-    d->w.players[1].root = v3(0.0f, 0.0f, -(d->w.table.half_length + 0.6f));
+    // The whole CPU-vs-CPU setup (AI tier table, difficulty, rest positions)
+    // lives in the core, so this adapter never re-creates it by hand.
+    world_setup_cpu_match(&d->w, 8.0f);
 
     // Static geometry: floor and table, sized from the core's own TableGeom so
     // gameplay and the visuals cannot drift apart.
@@ -139,16 +149,24 @@ void game_init(Game* d, SceneRuntime& scene) {
 }
 
 void game_update(Game* d, const InputState& in, float dt, GameWorld& out) {
-    (void)in; (void)dt;   // both players are AI; no human device feeds world_tick
+    (void)in;   // both players are AI; no human device feeds world_tick
 
     if (d->screen == Screen::Title) {
         publish_world(d, out);
         return;
     }
 
+    // world_tick is one fixed RTT frame (RTT_DT = 1/60 s). The render rate is
+    // whatever the tracer manages, so run as many core frames as real time
+    // elapsed; the cap keeps a long stall from turning into a burst.
     PlayerInput pin[RTT_MAX_PLAYERS];
     memset(pin, 0, sizeof(pin));
-    world_tick(&d->w, pin);
+    d->sim_acc += dt;
+    if (d->sim_acc > 0.25f) d->sim_acc = 0.25f;
+    while (d->sim_acc >= RTT_DT) {
+        world_tick(&d->w, pin);
+        d->sim_acc -= RTT_DT;
+    }
 
     publish_world(d, out);
 }

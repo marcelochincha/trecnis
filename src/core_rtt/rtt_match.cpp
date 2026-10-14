@@ -101,6 +101,19 @@ void world_init(World* w, const MatchSettings* s) {
     w->last_state = (RallyState)-1;
 }
 
+void world_setup_cpu_match(World* w, float tier) {
+    /* the AI tier table: aidata.xml is not generated yet, so every curve reads 0.5 (demo_m1's
+     * stand-in) [CHOICE until the tiers are generated] */
+    for (int t = 0; t < AI_TIERS; t++) for (int f = 0; f < AI_FIELDS; f++) w->ai_data.tier[t][f] = 0.5f;
+    for (int i = 0; i < RTT_MAX_PLAYERS; i++) {
+        Player* p = &w->players[i];
+        p->is_ai = 1;
+        p->control_mode = 0;
+        p->ai.level = tier;
+        p->root = v3(0.0f, 0.0f, p->side == SIDE_A ? 2.0f : -2.0f);   /* rest depth ~1.97 live [CHOICE 2.0] */
+    }
+}
+
 /* ---------------------------------------------------------------- shot pipeline */
 /* SIDE_A stands on +z and plays toward -z: its target grid is side 1 (area on the -z half) */
 static int grid_side(const Player* p) { return p->side == SIDE_A ? 1 : 0; }

@@ -73,6 +73,10 @@ typedef struct {
 } World;
 
 void world_init(World* w, const MatchSettings* s);
+/* a CPU-vs-CPU match on top of world_init: both players AI at the given difficulty tier (aidata.xml
+ * ladder, Exhibition Easy 3 / Medium 6 / Hard 11 / All-Star 15), standing at their rest depth. This
+ * is the one setup call a host (demo_trecnis, TRECNIS) makes, so a host never re-creates it by hand. */
+void world_setup_cpu_match(World* w, float tier);
 /* one fixed 1/60 s step */
 void world_tick(World* w, const PlayerInput in[RTT_MAX_PLAYERS]);
 
